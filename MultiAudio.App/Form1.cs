@@ -528,6 +528,22 @@ public partial class Form1 : Form
 
     // Windows names outputs "<kind> (<device>)", e.g. "Speakers (Realtek High Definition Audio)": every output is
     // "Speakers", so the part in brackets is what tells them apart. LastIndexOf copes with "(... (2))".
+    /// <summary>This PC's model name (e.g. "Surface Pro 3"), or null when the firmware has only a placeholder.</summary>
+    private static readonly string? PcModel = ReadPcModel();
+    private static string? ReadPcModel()
+    {
+        var v = (Microsoft.Win32.Registry.GetValue(@"HKEY_LOCAL_MACHINE\HARDWARE\DESCRIPTION\System\BIOS", "SystemProductName", null) as string)?.Trim();
+        return string.IsNullOrEmpty(v) || v.Contains("O.E.M", StringComparison.OrdinalIgnoreCase) || v.Contains("System Product", StringComparison.OrdinalIgnoreCase) ? null : v;
+    }
+
+    /// <summary>
+    /// The name people know an output by. Bluetooth/USB devices already carry their own name ("BlayWise's JBL
+    /// Boombox 3", as in Settings › Bluetooth). Built-in outputs only have the sound chip's name, so they're named
+    /// after the PC instead: "Surface Pro 3 speakers".
+    /// </summary>
+    private static string DisplayName(OutputDevice d) =>
+        d.IsBuiltIn && PcModel != null ? $"{PcModel} {DeviceKind(d.Name).ToLowerInvariant()}" : DeviceTitle(d.Name);
+
     private static string DeviceTitle(string name) { int i = name.IndexOf('('), j = name.LastIndexOf(')'); return i >= 0 && j > i ? name.Substring(i + 1, j - i - 1).Trim() : name.Trim(); }
     private static string DeviceKind(string name) { int i = name.IndexOf('('); return i > 0 ? name[..i].Trim() : "Output device"; }
 
@@ -595,7 +611,7 @@ public partial class Form1 : Form
     private ContextMenuStrip SendToMenu(AudioApp a)
     {
         var menu = new ContextMenuStrip();
-        foreach (var d in _devices) { var id = d.Id; menu.Items.Add(d.Name, null, (_, _) => CreateMapping(a, id)); }
+        foreach (var d in _devices) { var id = d.Id; menu.Items.Add(DisplayName(d), null, (_, _) => CreateMapping(a, id)); }
         if (_devices.Count > 0) menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("All outputs", null, (_, _) => CreateMapping(a, AllScope));
         return menu;
@@ -619,7 +635,7 @@ public partial class Form1 : Form
         meter.Location = new Point(width - right - S(30), S(10));
         if (target != null)
         {
-            var x = GlyphBtn(GCancel, $"Remove {AppName(a)} from {DeviceTitle(here?.Name ?? "this device")} (it keeps playing on {DeviceTitle(target.Name)})");
+            var x = GlyphBtn(GCancel, $"Remove {AppName(a)} from {(here != null ? DisplayName(here) : "this device")} (it keeps playing on {DisplayName(target)})");
             x.Location = new Point(width - S(36), S(4)); x.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             x.Click += (_, _) => MoveApp(a, target);
             chip.Controls.Add(x);
@@ -797,7 +813,7 @@ public partial class Form1 : Form
     /// </summary>
     private bool MoveApp(AudioApp a, OutputDevice target)
     {
-        if (a.DeviceId == target.Id) { SetStatus($"{AppName(a)} already plays on {DeviceTitle(target.Name)}."); return false; }
+        if (a.DeviceId == target.Id) { SetStatus($"{AppName(a)} already plays on {DisplayName(target)}."); return false; }
         try { if (target.IsDefault) AppEndpointRouter.ResetToDefault(a.ProcessId); else AppEndpointRouter.Move(a.ProcessId, target.Id); }
         catch (Exception ex) { SetStatus($"Couldn't move {AppName(a)}: {ex.Message}"); return false; }
         foreach (var m in _mappings.Where(m => m.App.ProcessId == a.ProcessId).ToArray())
@@ -808,7 +824,7 @@ public partial class Form1 : Form
         // Show it under the target right away; the next refresh confirms where it really plays.
         _allApps = _allApps.Select(x => x.ProcessId == a.ProcessId ? x with { DeviceId = target.Id, DeviceName = target.Name } : x).ToList();
         RenderChips();
-        SetStatus($"{AppName(a)} moved to {DeviceTitle(target.Name)}. Some apps switch on their next track or restart.");
+        SetStatus($"{AppName(a)} moved to {DisplayName(target)}. Some apps switch on their next track or restart.");
         return true;
     }
 
@@ -904,8 +920,10 @@ public partial class Form1 : Form
                 var d = _devices[i];
                 var (glyph, portable) = DeviceArt(d);
                 string connection = d.IsBluetooth ? " · Bluetooth" : d.IsBuiltIn ? " · Built-in" : "";
-                _outputChips[d.Id] = BuildDeviceRow(glyph, d.IsBluetooth ? GBluetooth : "", false, d.IsDefault, DeviceTitle(d.Name),
-                    (d.IsDefault ? "Default · " : "") + DeviceKind(d.Name) + connection, d.Id, "Remove all apps from this device", divider: i > 0, portable: portable);
+                // Built-in outputs are titled after the PC, so their detail line names the sound chip instead.
+                string kind = d.IsBuiltIn && PcModel != null ? DeviceTitle(d.Name) : DeviceKind(d.Name);
+                _outputChips[d.Id] = BuildDeviceRow(glyph, d.IsBluetooth ? GBluetooth : "", false, d.IsDefault, DisplayName(d),
+                    (d.IsDefault ? "Default · " : "") + kind + connection, d.Id, "Remove all apps from this device", divider: i > 0, portable: portable);
             }
             _allChips = BuildDeviceRow(GSpeakers, "", true, false, "All outputs", "Plays on every device at once", AllScope, "Remove all apps from all outputs", divider: _devices.Count > 0);
 
@@ -966,7 +984,7 @@ public partial class Form1 : Form
     {
         var id = AppSettings.DefaultOutputId;
         if (id == "") return "Off";
-        if (DefaultOutput is { } d) return DeviceTitle(d.Name);
+        if (DefaultOutput is { } d) return DisplayName(d);
         return id != null ? $"{AppSettings.DefaultOutputName ?? "Chosen device"} (not connected)" : "No Realtek speakers found";
     }
 
@@ -978,7 +996,7 @@ public partial class Form1 : Form
         foreach (var d in _devices)
         {
             var dev = d;
-            menu.Items.Add(new ToolStripMenuItem(d.Name, null, (_, _) => ChooseDefaultOutput(dev.Id, dev.Name)) { Checked = !off && current?.Id == d.Id });
+            menu.Items.Add(new ToolStripMenuItem(DisplayName(d), null, (_, _) => ChooseDefaultOutput(dev.Id, DisplayName(dev))) { Checked = !off && current?.Id == d.Id });
         }
         if (_devices.Count > 0) menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("Off — leave new apps on Windows' default", null, (_, _) => ChooseDefaultOutput("", null)) { Checked = off });
@@ -1013,9 +1031,9 @@ public partial class Form1 : Form
             try
             {
                 AppEndpointRouter.Move(a.ProcessId, target.Id);
-                SetStatus($"{AppName(a)} sent to {DeviceTitle(target.Name)} (default output for new apps)");
+                SetStatus($"{AppName(a)} sent to {DisplayName(target)} (default output for new apps)");
             }
-            catch (Exception ex) { SetStatus($"Couldn't send {AppName(a)} to {DeviceTitle(target.Name)}: {ex.Message}"); }
+            catch (Exception ex) { SetStatus($"Couldn't send {AppName(a)} to {DisplayName(target)}: {ex.Message}"); }
         }
         _primed = true; // everything seen on the first pass was already playing when Audio Router opened
     }
