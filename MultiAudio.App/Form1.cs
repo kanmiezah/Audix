@@ -8,6 +8,9 @@ namespace MultiAudio.App;
 /// <summary>A live route = one sink attached to one process capture.</summary>
 public sealed record RouteHandle(ProcessCapture Capture, OutputSink Sink, string AppName);
 
+/// <summary>Drag payload for a playing chip: dropping it on a device moves the app there (vs. adding a copy).</summary>
+public sealed record MoveRequest(AudioApp App);
+
 public partial class Form1 : Form
 {
     private sealed class Mapping
@@ -321,7 +324,7 @@ public partial class Form1 : Form
         // ===== Outputs =====
         var outLabel = SectionLabel("Outputs", 32, 4);
         // The how-to that used to be a subtitle under the title, now a quiet caption beside the section it explains.
-        var hint = Lbl("Drag an app onto a device to play it there, or use an app's › menu", FCaption, Muted);
+        var hint = Lbl("Drag an app onto a device to add it there; drag a playing chip to move it", FCaption, Muted);
         hint.Location = TextAt(hint, 0, 6);
         hint.Left += TextRenderer.MeasureText("Outputs", FBody).Width + S(10);
         outLabel.Controls.Add(hint);
@@ -500,6 +503,8 @@ public partial class Form1 : Form
             Location = P(64, 34), Size = new Size(row.Width - S(64 + 56), S(18)), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
         };
         var menu = new ContextMenuStrip();
+        if (scope != AllScope)
+            menu.Items.Add(new ToolStripMenuItem(isDefault ? "Windows default (current)" : "Set as Windows default", null, (_, _) => SetWindowsDefault(scope, title)) { Enabled = !isDefault });
         menu.Items.Add(removeText, null, (_, _) => ClearScope(scope));
         row.ContextMenuStrip = menu;
         var more = GlyphBtn(GChevron, $"Options for {title}");
@@ -601,17 +606,17 @@ public partial class Form1 : Form
         var meter = MakeMeter(() => _meters.TryGetValue(key, out var m) ? m.MasterPeakValue : 0f);
         meter.Anchor = AnchorStyles.Top | AnchorStyles.Right;
 
-        // ✕ only where the app isn't on Windows' default output: it sends the app back there.
-        // (On the default device it's the app's only output, so there's nothing to remove it to.)
-        var dev = _devices.FirstOrDefault(d => d.Id == a.DeviceId);
-        bool removable = dev != null && !dev.IsDefault;
-        int right = removable ? S(40) : S(12);
+        // ✕ moves the app off this device to where else it plays (or to Windows' default). Hidden only when
+        // there's nowhere else to go, since an app can't play on no device at all.
+        var here = _devices.FirstOrDefault(d => d.Id == a.DeviceId);
+        var target = RemoveTarget(a);
+        int right = target != null ? S(40) : S(12);
         meter.Location = new Point(width - right - S(30), S(10));
-        if (removable)
+        if (target != null)
         {
-            var x = GlyphBtn(GCancel, $"Remove {AppName(a)} from {DeviceTitle(dev!.Name)} (back to Windows' default output)");
+            var x = GlyphBtn(GCancel, $"Remove {AppName(a)} from {DeviceTitle(here?.Name ?? "this device")} (it keeps playing on {DeviceTitle(target.Name)})");
             x.Location = new Point(width - S(36), S(4)); x.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            x.Click += (_, _) => SendBackToDefault(a);
+            x.Click += (_, _) => MoveApp(a, target);
             chip.Controls.Add(x);
         }
         var name = new Label
@@ -620,6 +625,8 @@ public partial class Form1 : Form
             Location = P(38, 4), Size = new Size(width - S(38 + 38) - right, S(32)), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, // inset so it doesn't cover the chip border
         };
         chip.Controls.Add(meter); chip.Controls.Add(name); chip.Controls.Add(pic);
+        chip.Cursor = Cursors.Hand;
+        WireDrag(chip, new MoveRequest(a), chip, pic, name); // drag this chip to another device to move the app there
         return chip;
     }
 
@@ -698,17 +705,30 @@ public partial class Form1 : Form
         if (host == null) return;
         var normal = host.BorderColor;
         void Hi(bool on) { host.BorderThickness = on ? 2 : 1; host.BorderColor = on ? Accent : normal; host.Invalidate(); }
-        target.DragEnter += (_, e) => e.Effect = e.Data?.GetDataPresent(typeof(AudioApp)) == true ? DragDropEffects.Copy : DragDropEffects.None;
-        target.DragOver += (_, e) => { if (e.Data?.GetDataPresent(typeof(AudioApp)) == true) { e.Effect = DragDropEffects.Copy; Hi(true); } };
+        // An app from the Apps list adds a copy; a playing chip (MoveRequest) moves the app itself.
+        static DragDropEffects EffectFor(DragEventArgs e) =>
+            e.Data?.GetDataPresent(typeof(MoveRequest)) == true ? DragDropEffects.Move
+            : e.Data?.GetDataPresent(typeof(AudioApp)) == true ? DragDropEffects.Copy : DragDropEffects.None;
+        target.DragEnter += (_, e) => e.Effect = EffectFor(e);
+        target.DragOver += (_, e) => { e.Effect = EffectFor(e); if (e.Effect != DragDropEffects.None) Hi(true); };
         target.DragLeave += (_, _) => Hi(false);
-        target.DragDrop += (_, e) => { Hi(false); if (e.Data?.GetData(typeof(AudioApp)) is AudioApp app) CreateMapping(app, scope); };
+        target.DragDrop += (_, e) =>
+        {
+            Hi(false);
+            if (e.Data?.GetData(typeof(MoveRequest)) is MoveRequest mr)
+            {
+                if (scope == AllScope) CreateMapping(mr.App, AllScope);
+                else if (_devices.FirstOrDefault(d => d.Id == scope) is { } dev) MoveApp(mr.App, dev);
+            }
+            else if (e.Data?.GetData(typeof(AudioApp)) is AudioApp app) CreateMapping(app, scope);
+        };
     }
 
-    private void WireDrag(RoundedPanel card, AudioApp app, params Control[] handles)
+    private void WireDrag(RoundedPanel card, object payload, params Control[] handles)
     {
         Point down = Point.Empty; bool dragging = false;
         void Down(object? s, MouseEventArgs e) { down = e.Location; dragging = false; }
-        void Move(object? s, MouseEventArgs e) { if (e.Button == MouseButtons.Left && !dragging && (Math.Abs(e.X - down.X) > 4 || Math.Abs(e.Y - down.Y) > 4)) { dragging = true; _dragging = true; try { card.DoDragDrop(app, DragDropEffects.Copy); } finally { _dragging = false; } } }
+        void Move(object? s, MouseEventArgs e) { if (e.Button == MouseButtons.Left && !dragging && (Math.Abs(e.X - down.X) > 4 || Math.Abs(e.Y - down.Y) > 4)) { dragging = true; _dragging = true; try { card.DoDragDrop(payload, DragDropEffects.Copy | DragDropEffects.Move); } finally { _dragging = false; } } }
         foreach (var h in handles) { h.MouseDown += Down; h.MouseMove += Move; }
     }
 
@@ -717,30 +737,67 @@ public partial class Form1 : Form
     private void CreateMapping(AudioApp app, string scope, int volPct = 100, int delayMs = 0)
     {
         if (_mappings.Any(m => m.App.ProcessId == app.ProcessId && m.Scope == scope)) { SetStatus($"{AppName(app)} is already on that output."); return; }
+        // A copy on the device the app already plays on would double it there (an echo ~100 ms behind), so skip it.
+        string native = _allApps.FirstOrDefault(x => x.ProcessId == app.ProcessId)?.DeviceId ?? app.DeviceId;
+        var devices = AudioInventory.GetOutputDevices();
+        if (scope == native)
+        {
+            SetStatus($"{AppName(app)} already plays on {DeviceTitle(devices.FirstOrDefault(d => d.Id == native)?.Name ?? "that device")}.");
+            return;
+        }
         var m = new Mapping { App = app, Scope = scope };
         if (scope == AllScope)
-            foreach (var d in AudioInventory.GetOutputDevices()) m.Routes.Add(AddRoute(app.ProcessId, AppName(app), d.Id, d.Name, volPct, delayMs));
+            foreach (var d in devices.Where(d => d.Id != native)) m.Routes.Add(AddRoute(app.ProcessId, AppName(app), d.Id, d.Name, volPct, delayMs));
         else
         {
-            var dev = AudioInventory.GetOutputDevices().FirstOrDefault(d => d.Id == scope);
+            var dev = devices.FirstOrDefault(d => d.Id == scope);
             if (dev == null) { SetStatus("That device is no longer available."); return; }
             m.Routes.Add(AddRoute(app.ProcessId, AppName(app), dev.Id, dev.Name, volPct, delayMs));
         }
+        if (m.Routes.Count == 0) { SetStatus($"{AppName(app)} already plays on the only output."); return; }
         _mappings.Add(m);
         RenderChips();
-        SetStatus($"{AppName(app)} now plays on {(scope == AllScope ? "all outputs" : m.Routes[0].Sink.DeviceName)}");
+        SetStatus(scope == AllScope
+            ? $"{AppName(app)} now plays on all outputs (added {string.Join(", ", m.Routes.Select(r => DeviceTitle(r.Sink.DeviceName)))}; it already plays on {DeviceTitle(devices.FirstOrDefault(d => d.Id == native)?.Name ?? "its own device")})"
+            : $"{AppName(app)} now plays on {m.Routes[0].Sink.DeviceName}");
+    }
+
+    private void SetWindowsDefault(string deviceId, string title)
+    {
+        try { AppEndpointRouter.SetWindowsDefault(deviceId); }
+        catch (Exception ex) { SetStatus($"Couldn't make {title} the Windows default: {ex.Message}"); return; }
+        Refresh_Click(this, EventArgs.Empty); // rows re-read which device is default
+        SetStatus($"{title} is now the Windows default output. Apps that follow the default switch to it.");
     }
 
     /// <summary>Clear the app's per-app output so it follows Windows' default device again.</summary>
-    private void SendBackToDefault(AudioApp a)
+    /// <summary>
+    /// Move the app's own output to <paramref name="target"/> (Windows' per-app setting; for the Windows default the
+    /// setting is cleared so the app follows the default), and drop any copy already on the target so nothing plays twice.
+    /// </summary>
+    private void MoveApp(AudioApp a, OutputDevice target)
     {
-        var def = _devices.FirstOrDefault(d => d.IsDefault);
-        try { AppEndpointRouter.ResetToDefault(a.ProcessId); }
+        if (a.DeviceId == target.Id) { SetStatus($"{AppName(a)} already plays on {DeviceTitle(target.Name)}."); return; }
+        try { if (target.IsDefault) AppEndpointRouter.ResetToDefault(a.ProcessId); else AppEndpointRouter.Move(a.ProcessId, target.Id); }
         catch (Exception ex) { SetStatus($"Couldn't move {AppName(a)}: {ex.Message}"); return; }
-        if (def != null) // show it under the default device right away; the next refresh confirms where it really plays
-            _allApps = _allApps.Select(x => x.ProcessId == a.ProcessId ? x with { DeviceId = def.Id, DeviceName = def.Name } : x).ToList();
+        foreach (var m in _mappings.Where(m => m.App.ProcessId == a.ProcessId).ToArray())
+        {
+            foreach (var h in m.Routes.Where(r => r.Sink.DeviceId == target.Id).ToArray()) { StopRouteHandle(h); m.Routes.Remove(h); }
+            if (m.Routes.Count == 0) _mappings.Remove(m);
+        }
+        // Show it under the target right away; the next refresh confirms where it really plays.
+        _allApps = _allApps.Select(x => x.ProcessId == a.ProcessId ? x with { DeviceId = target.Id, DeviceName = target.Name } : x).ToList();
         RenderChips();
-        SetStatus($"{AppName(a)} moved back to Windows' default output{(def != null ? $" ({DeviceTitle(def.Name)})" : "")}. Some apps switch on their next track or restart.");
+        SetStatus($"{AppName(a)} moved to {DeviceTitle(target.Name)}. Some apps switch on their next track or restart.");
+    }
+
+    /// <summary>Where ✕ on a playing chip sends the app: a device it also plays on (a copy), else Windows' default.
+    /// Null when there's nowhere else, i.e. it's on the default device with no copies.</summary>
+    private OutputDevice? RemoveTarget(AudioApp a)
+    {
+        var copyDevice = _mappings.Where(m => m.App.ProcessId == a.ProcessId).SelectMany(m => m.Routes)
+            .Select(r => r.Sink.DeviceId).FirstOrDefault(id => id != a.DeviceId);
+        return _devices.FirstOrDefault(d => d.Id == copyDevice) ?? _devices.FirstOrDefault(d => d.IsDefault && d.Id != a.DeviceId);
     }
 
     private void RemoveMapping(Mapping m)

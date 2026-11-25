@@ -96,6 +96,33 @@ public static class AppEndpointRouter
         return i > 0 && i < s.Length - 1 ? s[(i + 1)..].TrimEnd('}') : s;
     }
 
+    /// <summary>Make <paramref name="mmDeviceId"/> Windows' default output for every role, the same as choosing it
+    /// in Settings › Sound. Uses the long-standing undocumented IPolicyConfig (as EarTrumpet and others do).</summary>
+    public static void SetWindowsDefault(string mmDeviceId)
+    {
+        var config = (IPolicyConfig)new CPolicyConfigClient();
+        try
+        {
+            foreach (var role in new[] { ERole.eConsole, ERole.eMultimedia, ERole.eCommunications })
+                Marshal.ThrowExceptionForHR(config.SetDefaultEndpoint(mmDeviceId, role));
+        }
+        finally { Marshal.ReleaseComObject(config); }
+    }
+
+    [ComImport, Guid("870af99c-171d-4f9e-af0d-e63df40c2bc9")]
+    private class CPolicyConfigClient { }
+
+    // Vtable order matters: the methods before SetDefaultEndpoint are declared only to keep it aligned.
+    [Guid("f8679f50-850a-41cf-9c72-430f290290c8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IPolicyConfig
+    {
+        [PreserveSig] int GetMixFormat(); [PreserveSig] int GetDeviceFormat(); [PreserveSig] int ResetDeviceFormat();
+        [PreserveSig] int SetDeviceFormat(); [PreserveSig] int GetProcessingPeriod(); [PreserveSig] int SetProcessingPeriod();
+        [PreserveSig] int GetShareMode(); [PreserveSig] int SetShareMode(); [PreserveSig] int GetPropertyValue(); [PreserveSig] int SetPropertyValue();
+        [PreserveSig] int SetDefaultEndpoint([MarshalAs(UnmanagedType.LPWStr)] string deviceId, ERole role);
+        [PreserveSig] int SetEndpointVisibility();
+    }
+
     private static object CreateFactory()
     {
         // Windows 11 (21H2) is build 22000+.
