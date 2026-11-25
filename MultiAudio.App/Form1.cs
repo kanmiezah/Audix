@@ -531,7 +531,7 @@ public partial class Form1 : Form
         {
             Text = AppName(m.App), Font = FBody, ForeColor = Ink, HoverColor = HoverBg, NoBorder = true, FocusColor = Ink, Radius = S(4),
             TextAlign = ContentAlignment.MiddleLeft, Padding = Pad(4, 0, 0, 0),
-            Location = P(36, 4), Size = new Size(width - S(36 + 40), S(32)), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+            Location = P(36, 4), Size = new Size(width - S(36 + 40 + 38), S(32)), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
             AccessibleName = $"{AppName(m.App)} on {dest}. Set delay",
         };
         name.Click += (_, _) => ShowDelayPopup(m, chip);
@@ -541,7 +541,10 @@ public partial class Form1 : Form
         x.Location = new Point(width - S(36), S(4)); x.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         x.Click += (_, _) => RemoveMapping(m);
 
-        chip.Controls.Add(x); chip.Controls.Add(name);
+        // The routed copy carries the app's own sound, so its meter follows the app's level.
+        var meter = MakeMeter(() => AppLevel(m.App.ProcessId));
+        meter.Location = new Point(width - S(40 + 34), S(10)); meter.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        chip.Controls.Add(x); chip.Controls.Add(meter); chip.Controls.Add(name);
         return chip;
     }
 
@@ -595,18 +598,12 @@ public partial class Form1 : Form
         var pic = new PictureBox { Image = AppIcon(a.ProcessId, S(20)), SizeMode = PictureBoxSizeMode.Zoom, Size = Sz(20, 20), Location = P(10, 10) };
         // Live level of this app on this device, instead of a static "Playing" label.
         var key = (a.ProcessId, a.DeviceId);
-        var meter = new LevelMeter(5)
-        {
-            Source = () => _meters.TryGetValue(key, out var m) ? m.MasterPeakValue : 0f,
-            BarColor = Accent, IdleColor = ControlBorder, Size = Sz(30, 22), Location = new Point(width - S(12 + 30), S(9)),
-            Anchor = AnchorStyles.Top | AnchorStyles.Right, AccessibleName = "Playing",
-        };
-        _liveMeters.Add(meter);
-        meter.Disposed += (_, _) => _liveMeters.Remove(meter);
+        var meter = MakeMeter(() => _meters.TryGetValue(key, out var m) ? m.MasterPeakValue : 0f);
+        meter.Location = new Point(width - S(12 + 30), S(10)); meter.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         var name = new Label
         {
             Text = AppName(a), Font = FBody, ForeColor = Ink, AutoEllipsis = true, UseMnemonic = false, TextAlign = ContentAlignment.MiddleLeft,
-            Location = P(38, 4), Size = new Size(width - S(38 + 12 + 42), S(32)), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, // inset so it doesn't cover the chip border
+            Location = P(38, 4), Size = new Size(width - S(38 + 12 + 38), S(32)), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, // inset so it doesn't cover the chip border
         };
         chip.Controls.Add(meter); chip.Controls.Add(name); chip.Controls.Add(pic);
         return chip;
@@ -622,7 +619,7 @@ public partial class Form1 : Form
         var name = new Label
         {
             Text = AppName(a), Font = FBody, ForeColor = Ink, AutoEllipsis = true, UseMnemonic = false, TextAlign = ContentAlignment.MiddleLeft,
-            Location = P(52, 8), Size = new Size(w - S(52 + 296), S(40)), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+            Location = P(52, 8), Size = new Size(w - S(52 + 338), S(40)), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
         };
 
         // Right to left: chevron · percentage · slider · mute
@@ -673,7 +670,9 @@ public partial class Form1 : Form
             ShowMute();
         };
 
-        row.Controls.Add(send); row.Controls.Add(pct); row.Controls.Add(slider); row.Controls.Add(mute); row.Controls.Add(name); row.Controls.Add(pic);
+        var level = MakeMeter(() => AppLevel(a.ProcessId));
+        level.Location = new Point(w - S(286 + 10 + 30), S(18)); level.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        row.Controls.Add(send); row.Controls.Add(pct); row.Controls.Add(slider); row.Controls.Add(mute); row.Controls.Add(level); row.Controls.Add(name); row.Controls.Add(pic);
         WireDrag(row, a, row, pic, name);
         return row;
     }
@@ -820,9 +819,26 @@ public partial class Form1 : Form
     private readonly List<LevelMeter> _liveMeters = new();
     private System.Windows.Forms.Timer? _meterTimer;
 
+    private LevelMeter MakeMeter(Func<float> source)
+    {
+        var meter = new LevelMeter { Source = source, BarColor = Accent, Size = Sz(30, 20), AccessibleName = "Sound level" };
+        _liveMeters.Add(meter);
+        meter.Disposed += (_, _) => _liveMeters.Remove(meter);
+        return meter;
+    }
+
+    /// <summary>An app's loudest session right now (it may play on several devices).</summary>
+    private float AppLevel(int pid)
+    {
+        float max = 0;
+        foreach (var (key, m) in _meters)
+            if (key.Pid == pid) { try { max = Math.Max(max, m.MasterPeakValue); } catch { } }
+        return max;
+    }
+
     private void StartMeters()
     {
-        _meterTimer = new System.Windows.Forms.Timer { Interval = 50 }; // ~20 fps: lively, and cheap (one COM read per meter)
+        _meterTimer = new System.Windows.Forms.Timer { Interval = 33 }; // ~30 fps for smooth motion; one cheap COM read per meter
         _meterTimer.Tick += (_, _) => { if (Visible && WindowState != FormWindowState.Minimized) foreach (var m in _liveMeters.ToArray()) m.Sample(); };
         _meterTimer.Start();
     }

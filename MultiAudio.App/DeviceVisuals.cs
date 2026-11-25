@@ -94,19 +94,31 @@ public sealed class DeviceIcon : Control
 }
 
 /// <summary>
-/// A tiny live level visualization: bars that scroll from right to left with the app's recent peak level
-/// (sampled from Windows' meter for its audio session), centred like a waveform. Call <see cref="Sample"/> on a timer.
+/// A small equaliser-style visualization for an app's sound. The bars' overall height follows the app's real
+/// loudness (Windows' peak meter for its audio session); their spread between bars is decorative, since Windows
+/// exposes a level, not a spectrum. Bars rise fast and fall gently, so it reads as fluid motion rather than flicker.
+/// Call <see cref="Sample"/> on a ~30 fps timer.
 /// </summary>
 public sealed class LevelMeter : Control
 {
     public Func<float>? Source { get; set; }
     public Color BarColor { get; set; } = Color.RoyalBlue;
-    public Color IdleColor { get; set; } = Color.Gray;
-    private readonly float[] _bars;
 
-    public LevelMeter(int bars = 7)
+    private readonly float[] _h;       // current, smoothed bar heights (0..1)
+    private readonly float[] _speed;   // each bar sways at its own rate so they don't move in lockstep
+    private readonly float[] _phase;
+    private double _t;
+
+    private static int _instances; // offsets each meter's sway so meters for the same app don't move in lockstep
+
+    public LevelMeter(int bars = 6)
     {
-        _bars = new float[bars];
+        _h = new float[bars];
+        _speed = new float[bars];
+        _phase = new float[bars];
+        float[] speeds = { 7.1f, 9.7f, 6.3f, 8.9f, 10.9f, 7.7f };
+        float offset = (_instances++ % 7) * 2.3f;
+        for (int i = 0; i < bars; i++) { _speed[i] = speeds[i % speeds.Length]; _phase[i] = i * 1.9f + offset; }
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
         TabStop = false;
         AccessibleRole = AccessibleRole.Indicator;
@@ -114,12 +126,17 @@ public sealed class LevelMeter : Control
 
     public void Sample()
     {
-        float p = 0;
-        try { p = Source?.Invoke() ?? 0; } catch { } // session gone: show silence
-        // Music peaks mostly sit between 0.2 and 0.6; stretch that range so the bars visibly rise and fall.
-        p = Math.Clamp(p * 1.6f, 0f, 1f);
-        Array.Copy(_bars, 1, _bars, 0, _bars.Length - 1);
-        _bars[^1] = p;
+        float level = 0;
+        try { level = Source?.Invoke() ?? 0; } catch { } // session gone: show silence
+        // Music peaks mostly sit between 0.2 and 0.6; stretch that range so loud and quiet passages look different.
+        level = Math.Clamp(level * 1.7f, 0f, 1f);
+        _t += 0.033;
+        for (int i = 0; i < _h.Length; i++)
+        {
+            float sway = 0.5f + 0.5f * (float)Math.Sin(_t * _speed[i] + _phase[i]);
+            float target = level < 0.03f ? 0f : level * (0.35f + 0.65f * sway);
+            _h[i] += (target - _h[i]) * (target > _h[i] ? 0.55f : 0.16f); // fast attack, gentle release
+        }
         Invalidate();
     }
 
@@ -128,16 +145,21 @@ public sealed class LevelMeter : Control
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.Clear(Parent?.BackColor ?? BackColor);
-        int n = _bars.Length;
-        float gap = Math.Max(2f, Width / (n * 3f)), w = (Width - gap * (n - 1)) / n, mid = Height / 2f;
-        using var on = new SolidBrush(BarColor);
-        using var idle = new SolidBrush(IdleColor);
+        int n = _h.Length;
+        // Thin bars with clear gaps, sitting on a common baseline like an equaliser.
+        float w = Math.Max(2f, Width / (n * 1.9f)), gap = (Width - w * n) / Math.Max(1, n - 1);
+        if (_h.All(v => v < 0.04f)) return; // silent: show nothing rather than placeholder dots
+        using var brush = new SolidBrush(BarColor);
         for (int i = 0; i < n; i++)
         {
-            float h = Math.Max(w, _bars[i] * Height); // never thinner than a dot
-            float x = i * (w + gap);
-            using var path = RoundedPanel.RoundedRect(Rectangle.Round(new RectangleF(x, mid - h / 2, w, h)), (int)(w / 2));
-            g.FillPath(_bars[i] < 0.05f ? idle : on, path);
+            float h = Math.Max(w, _h[i] * Height); // a dot when silent
+            var r = new RectangleF(i * (w + gap), Height - h, w, h);
+            using var path = new GraphicsPath();
+            path.AddArc(r.X, r.Y, w, w, 180, 180);                    // rounded top
+            path.AddLine(r.Right, r.Y + w / 2, r.Right, r.Bottom);
+            path.AddLine(r.Right, r.Bottom, r.X, r.Bottom);
+            path.CloseFigure();
+            g.FillPath(brush, path);
         }
     }
 }
