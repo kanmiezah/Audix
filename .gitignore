@@ -10,3 +10,6 @@ publish/
 
 # Machine-specific registry backup (contains this PC's device IDs)
 *.reg
+
+# Built installers
+installer/Output/
