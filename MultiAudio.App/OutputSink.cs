@@ -13,6 +13,7 @@ public sealed class OutputSink : IDisposable
 {
     private readonly string _deviceId;
     private readonly BufferedWaveProvider _buffer;
+    private readonly JitterBuffer _jitter;
     private readonly AdjustableDelayProvider _delay;
     private VolumeSampleProvider? _volume;
     private WasapiOut? _out;
@@ -20,40 +21,49 @@ public sealed class OutputSink : IDisposable
     public string DeviceId => _deviceId;
     public string DeviceName { get; }
 
+    // Cushion kept between capture and playback. Capture packets arrive in bursts and every
+    // device (especially Bluetooth) pulls on its own schedule; without a cushion the output
+    // drains the buffer between packets and plays the gap as a click.
+    private const int PrimeMs = 60;
+    // Backlog allowed above prime + delay before we resync. Only real clock drift between the
+    // devices should get here (≈ minutes), so trims — which are audible skips — stay rare.
+    private const int HeadroomMs = 120;
+    private const int OutputLatencyMs = 60;
+
     public OutputSink(string deviceId, string deviceName)
     {
         _deviceId = deviceId;
         DeviceName = deviceName;
         _buffer = new BufferedWaveProvider(ProcessCapture.CaptureFormat)
         {
-            BufferDuration = TimeSpan.FromMilliseconds(500), // hard cap on how far we can lag
+            // Must hold the max user delay (500 ms) + prime + headroom, or the delay gets eaten.
+            BufferDuration = TimeSpan.FromMilliseconds(1500),
             DiscardOnBufferOverflow = true,
+            ReadFully = false, // JitterBuffer decides what an underrun sounds like
         };
-        _delay = new AdjustableDelayProvider(_buffer);
+        _jitter = new JitterBuffer(_buffer, PrimeMs);
+        _delay = new AdjustableDelayProvider(_jitter);
     }
 
-    // If the queue backs up past MaxLagMs (clock drift, a burst, a device stall), the
-    // backlog would become permanent lag — so we drop it back down to ResyncMs ("live").
-    // Keep the window TIGHT so two outputs of the same app can't drift far apart on their
-    // own (device-inherent latency differences are handled by the per-output delay control).
-    private const int MaxLagMs = 140;
-    private const int ResyncMs = 110;
 
     public void Start()
     {
         var device = new MMDeviceEnumerator().GetDevice(_deviceId);
         var mix = device.AudioClient.MixFormat;
 
-        // Chain: 16-bit capture -> delay -> (sample) volume -> float -> resample to device mix.
-        // Volume is applied in the PCM/sample domain (ToSampleProvider only supports PCM/float,
-        // not the device's WaveFormatExtensible mix), then we resample the plain float output
-        // to whatever the device actually wants.
+        // Chain: 16-bit capture -> jitter buffer -> delay -> volume (float) -> match device rate/channels.
         _volume = new VolumeSampleProvider(_delay.ToSampleProvider()) { Volume = 1.0f };
-        IWaveProvider floatStream = _volume.ToWaveProvider();          // 32-bit IEEE float, 48 kHz
-        IWaveProvider outStream = new MediaFoundationResampler(floatStream, mix) { ResamplerQuality = 60 };
+        ISampleProvider s = _volume;
+        // Not MediaFoundationResampler: it pulls ~1 s from its source per read, which on a live buffer
+        // means seconds of padding and constant trims (the stutter/crackle). WDL pulls what's asked for.
+        if (mix.SampleRate != ProcessCapture.CaptureFormat.SampleRate) s = new WdlResamplingSampleProvider(s, mix.SampleRate);
+        if (mix.Channels == 1) s = new StereoToMonoSampleProvider(s);
+        else if (mix.Channels > 2) s = new MultiplexingSampleProvider(new[] { s }, mix.Channels); // L/R repeat across extra channels
+        IWaveProvider outStream = s.ToWaveProvider(); // 32-bit float at the device's own rate and channel count
 
-        // Event-driven, low output-buffer latency (was 80 ms). ~35 ms is safe in shared mode.
-        _out = new WasapiOut(device, AudioClientShareMode.Shared, true, 35);
+        // 35 ms left Bluetooth endpoints too little slack in shared mode; 60 ms is still well under
+        // what's noticeable for music/video and survives scheduler hiccups.
+        _out = new WasapiOut(device, AudioClientShareMode.Shared, true, OutputLatencyMs);
         _out.Init(outStream);
         _out.Play();
     }
@@ -62,10 +72,12 @@ public sealed class OutputSink : IDisposable
     public void Feed(byte[] data, int bytes)
     {
         _buffer.AddSamples(data, 0, bytes);
-        // Drop any backlog beyond MaxLagMs so latency can't creep up over time.
-        if (_buffer.BufferedDuration.TotalMilliseconds > MaxLagMs)
+
+        // The delay provider deliberately lets DelayMs of audio pile up here, so the cap includes it.
+        int targetMs = PrimeMs + DelayMs;
+        if (_buffer.BufferedDuration.TotalMilliseconds > targetMs + HeadroomMs)
         {
-            int keep = (int)(_buffer.WaveFormat.AverageBytesPerSecond * (ResyncMs / 1000.0));
+            int keep = (int)(_buffer.WaveFormat.AverageBytesPerSecond * (targetMs / 1000.0));
             keep -= keep % _buffer.WaveFormat.BlockAlign;
             int drop = _buffer.BufferedBytes - keep;
             if (drop > 0) { var junk = new byte[drop]; _buffer.Read(junk, 0, drop); }
@@ -91,5 +103,42 @@ public sealed class OutputSink : IDisposable
         try { _out?.Stop(); } catch { }
         try { _out?.Dispose(); } catch { }
         _out = null;
+    }
+
+    /// <summary>
+    /// Plays silence until <c>primeMs</c> of audio is buffered, then plays it. If the buffer ever runs
+    /// dry it pads the gap with silence and re-primes, so one late packet costs one clean gap instead
+    /// of a run of crackles while the buffer limps along near empty.
+    /// </summary>
+    private sealed class JitterBuffer : IWaveProvider
+    {
+        private readonly BufferedWaveProvider _src;
+        private readonly int _primeBytes;
+        private bool _priming;
+
+        public JitterBuffer(BufferedWaveProvider src, int primeMs)
+        {
+            _src = src;
+            _primeBytes = src.WaveFormat.AverageBytesPerSecond / 1000 * primeMs;
+            _priming = _primeBytes > 0;
+        }
+
+        public WaveFormat WaveFormat => _src.WaveFormat;
+
+        public int Read(byte[] buffer, int offset, int count)
+        {
+            if (_priming)
+            {
+                if (_src.BufferedBytes < _primeBytes + count) { Array.Clear(buffer, offset, count); return count; }
+                _priming = false;
+            }
+            int n = _src.Read(buffer, offset, count);
+            if (n < count)
+            {
+                Array.Clear(buffer, offset + n, count - n);
+                _priming = _primeBytes > 0;
+            }
+            return count;
+        }
     }
 }
