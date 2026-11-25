@@ -393,6 +393,7 @@ public partial class Form1 : Form
         }
 
         var audio = GroupOf(
+            (GVolume, "Default output for new apps", "Apps that start playing while Audio Router is running go to your PC's Realtek speakers, unless you route them.", null),
             (GReset, "Reset app outputs", "Send every app back to the Windows default output. Use this if an app seems stuck on a device.",
                 Btn("Reset", (_, _) => ResetAllOverrides()).Also(b => b.AccessibleName = "Reset app outputs")),
             (GSaved, "Saved profiles", "Routing profiles saved on this PC.",
@@ -773,8 +774,38 @@ public partial class Form1 : Form
             _allApps = AudioInventory.GetActiveAudioApps();
             RebuildAppCards();
             RenderChips();
+            SendNewAppsToDefaultOutput(); // last, so its "sent to…" status isn't overwritten by the counts
         }
         catch (Exception ex) { SetStatus("Error: " + ex.Message); }
+    }
+
+    private readonly HashSet<int> _seenApps = new();
+    private bool _primed;
+
+    /// <summary>The output new apps are sent to: the PC's own (Realtek) speakers. Null if there are none.</summary>
+    private OutputDevice? DefaultOutput => _devices.FirstOrDefault(d => d.Name.Contains("Realtek", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Apps that start playing while Audio Router runs go to <see cref="DefaultOutput"/> instead of Windows'
+    /// default device, via the per-app output setting (Windows remembers it for that app). Apps already playing
+    /// when Audio Router opened, and apps with a route, are left alone.
+    /// </summary>
+    private void SendNewAppsToDefaultOutput()
+    {
+        var target = DefaultOutput;
+        foreach (var a in _allApps)
+        {
+            bool isNew = _seenApps.Add(a.ProcessId);
+            if (!isNew || !_primed || target == null || a.DeviceId == target.Id) continue;
+            if (_mappings.Any(m => m.App.ProcessId == a.ProcessId)) continue;
+            try
+            {
+                AppEndpointRouter.Move(a.ProcessId, target.Id);
+                SetStatus($"{AppName(a)} sent to {DeviceTitle(target.Name)} (default output for new apps)");
+            }
+            catch (Exception ex) { SetStatus($"Couldn't send {AppName(a)} to {DeviceTitle(target.Name)}: {ex.Message}"); }
+        }
+        _primed = true; // everything seen on the first pass was already playing when Audio Router opened
     }
 
     private bool _dragging;

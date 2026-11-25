@@ -31,6 +31,7 @@ public static class AppEndpointRouter
         WindowsCreateString(str, (uint)str.Length, out IntPtr hstring);
         int h1 = Set(factory, processId, ERole.eMultimedia, hstring);
         int h2 = Set(factory, processId, ERole.eConsole, hstring);
+        Marshal.ThrowExceptionForHR(h1 < 0 ? h1 : h2); // no-op when both succeeded
         string readback = Get(factory, processId, ERole.eMultimedia);
         return $"hr(mm)=0x{h1:X8} hr(con)=0x{h2:X8}; now persisted='{Shorten(readback)}'";
     }
