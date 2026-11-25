@@ -1,10 +1,10 @@
-# Audio Router
+# Audix
 
 Send each Windows app's sound to the speakers you choose: one app to your Bluetooth speaker, another to your laptop speakers, or the same app on several at once, kept in sync.
 
 ## Download
 
-Get **AudioRouter-Setup.exe** from the [latest release](https://github.com/kanmiezah/AudioMap/releases/latest) and run it.
+Get **Audix-Setup.exe** from the [latest release](https://github.com/kanmiezah/AudioMap/releases/latest) and run it.
 
 The installer isn't code-signed yet, so Windows SmartScreen may say it "protected your PC". Click **More info → Run anyway**.
 
@@ -30,7 +30,7 @@ dotnet publish MultiAudio.App\MultiAudio.App.csproj -c Release -r win-x64 --self
 Then build the installer with [Inno Setup 6](https://jrsoftware.org/isinfo.php):
 
 ```powershell
-ISCC.exe installer\AudioRouter.iss
+ISCC.exe installer\Audix.iss
 ```
 
-The exe is `MultiAudio.exe`; saved settings live in `%AppData%\MultiAudio`.
+The exe is `Audix.exe`; saved settings live in `%AppData%\MultiAudio` (its original folder name).

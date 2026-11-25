@@ -21,7 +21,7 @@ public static class AppSettings
     public static string? DefaultOutputId => Current.DefaultOutputId;
     public static string? DefaultOutputName => Current.DefaultOutputName;
 
-    /// <summary>Returns false if the choice couldn't be saved (it still applies until Audio Router closes).</summary>
+    /// <summary>Returns false if the choice couldn't be saved (it still applies until Audix closes).</summary>
     public static bool SetDefaultOutput(string? id, string? name)
     {
         Current.DefaultOutputId = id;

@@ -110,7 +110,7 @@ public static class AudioInventory
                 string name;
                 try { name = Process.GetProcessById((int)pid).ProcessName; }
                 catch { name = "(pid " + pid + ")"; }
-                // Another running copy of Audio Router: its sessions are routed copies, not an app (and routing them would loop).
+                // Another running copy of Audix: its sessions are routed copies, not an app (and routing them would loop).
                 if (name == OwnProcessName) continue;
 
                 // Dedupe by process; prefer an Active session's device if we see several.

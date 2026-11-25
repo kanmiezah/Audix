@@ -7,13 +7,13 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
 
-    <!-- Exe stays MultiAudio.exe so existing shortcuts keep working; everything users read says Audio Router. -->
-    <AssemblyName>MultiAudio</AssemblyName>
-    <Product>Audio Router</Product>
-    <AssemblyTitle>Audio Router</AssemblyTitle>
-    <Version>1.0.0</Version>
-    <FileVersion>1.0.0.0</FileVersion>
-    <Company>Audio Router</Company>
+    <!-- The app is Audix; the project folder keeps its original MultiAudio name. -->
+    <AssemblyName>Audix</AssemblyName>
+    <Product>Audix</Product>
+    <AssemblyTitle>Audix</AssemblyTitle>
+    <Version>1.1.0</Version>
+    <FileVersion>1.1.0.0</FileVersion>
+    <Company>Audix</Company>
     <ApplicationIcon>app.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- shortcut: SystemAware is crisp on the primary monitor, bitmap-stretched on a second monitor with a different scale.

@@ -1,9 +1,9 @@
-; Inno Setup script for Audio Router. Build:  ISCC.exe installer\AudioRouter.iss
+; Inno Setup script for Audix. Build:  ISCC.exe installer\Audix.iss
 ; Packages the self-contained single-file build from ..\publish (dotnet publish, see README).
 
-#define AppName "Audio Router"
-#define AppVersion "1.0.0"
-#define AppExe "MultiAudio.exe"
+#define AppName "Audix"
+#define AppVersion "1.1.0"
+#define AppExe "Audix.exe"
 
 [Setup]
 ; Never change AppId: it's how Windows matches upgrades and the uninstaller to this app.
@@ -11,15 +11,17 @@ AppId={{6E0C8A9B-4D51-4B7E-9C2A-3F1D7A5E2B90}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
-AppPublisher=Audio Router
+AppPublisher=Audix
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
+; Don't reuse 1.0.0's "Audio Router" Start-menu folder on upgrade.
+UsePreviousGroup=no
 ; Installs for all users (needs admin); the dialog lets people pick a just-for-me install instead.
 PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=dialog
 OutputDir=Output
-OutputBaseFilename=AudioRouter-Setup-{#AppVersion}
+OutputBaseFilename=Audix-Setup-{#AppVersion}
 SetupIconFile=..\MultiAudio.App\app.ico
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
@@ -45,12 +47,19 @@ Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"
 Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
+[InstallDelete]
+; Upgrading from 1.0.0, when the app was "Audio Router" with MultiAudio.exe: remove what the old name left behind.
+Type: files; Name: "{app}\MultiAudio.exe"
+Type: filesandordirs; Name: "{autoprograms}\Audio Router"
+Type: files; Name: "{autodesktop}\Audio Router.lnk"
+
 [Registry]
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "{#AppName}"; ValueData: """{app}\{#AppExe}"""; Flags: uninsdeletevalue; Tasks: startup
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueName: "Audio Router"; Flags: deletevalue
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 ; It keeps running in the notification area, so close it before removing the file.
-Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM {#AppExe}"; Flags: runhidden; RunOnceId: "StopAudioRouter"
+Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM {#AppExe}"; Flags: runhidden; RunOnceId: "StopAudix"

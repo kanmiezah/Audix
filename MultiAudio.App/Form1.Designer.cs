@@ -16,6 +16,6 @@ partial class Form1
         this.components = new System.ComponentModel.Container();
         // Every size in Form1 is scaled explicitly with S(); framework autoscaling would double it.
         this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.None;
-        this.Text = "Audio Router";
+        this.Text = "Audix";
     }
 }

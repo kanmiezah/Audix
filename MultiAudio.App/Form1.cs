@@ -265,7 +265,7 @@ public partial class Form1 : Form
     private void BuildUi()
     {
         Font = FBody;
-        BackColor = ContentBg; Text = "Audio Router";
+        BackColor = ContentBg; Text = "Audix";
         _genericApp = MakeGenericAppIcon();
 
         var content = new Panel { Dock = DockStyle.Fill, BackColor = ContentBg, Padding = Pad(32, 20, 32, 0) };
@@ -421,13 +421,13 @@ public partial class Form1 : Form
         _tips.SetToolTip(_defaultOutBtn, "Choose where new apps play");
 
         var audio = GroupOf(
-            (GVolume, "Default output for new apps", "Apps that start playing while Audio Router is running go to this device, unless you route them.", _defaultOutBtn),
+            (GVolume, "Default output for new apps", "Apps that start playing while Audix is running go to this device, unless you route them.", _defaultOutBtn),
             (GReset, "Reset app outputs", "Send every app back to the Windows default output. Use this if an app seems stuck on a device.",
                 Btn("Reset", (_, _) => ResetAllOverrides()).Also(b => b.AccessibleName = "Reset app outputs")),
             (GSaved, "Saved profiles", "Routing profiles saved on this PC.",
                 Btn("Clear", (_, _) => ClearProfiles()).Also(b => b.AccessibleName = "Clear saved profiles")));
         var about = GroupOf(
-            (GInfo, "Audio Router", "Sends each app's sound to the devices you choose. Closing the window keeps it running in the notification area, and routes stay active.", null));
+            (GInfo, "Audix", "Sends each app's sound to the devices you choose. Closing the window keeps it running in the notification area, and routes stay active.", null));
 
         // Docking: last added is outermost (top).
         page.Controls.Add(about);
@@ -1008,15 +1008,15 @@ public partial class Form1 : Form
     {
         bool saved = AppSettings.SetDefaultOutput(id, name);
         _defaultOutBtn.Text = DefaultOutputLabel();
-        SetStatus(!saved ? "Couldn't save the default output; it applies until Audio Router closes."
+        SetStatus(!saved ? "Couldn't save the default output; it applies until Audix closes."
             : id == "" ? "New apps will stay on Windows' default output."
             : $"New apps will go to {DefaultOutputLabel()}.");
     }
 
     /// <summary>
-    /// Apps that start playing while Audio Router runs go to <see cref="DefaultOutput"/> instead of Windows'
+    /// Apps that start playing while Audix runs go to <see cref="DefaultOutput"/> instead of Windows'
     /// default device, via the per-app output setting (Windows remembers it for that app). Apps already playing
-    /// when Audio Router opened, and apps with a route, are left alone.
+    /// when Audix opened, and apps with a route, are left alone.
     /// </summary>
     private void SendNewAppsToDefaultOutput()
     {
@@ -1035,7 +1035,7 @@ public partial class Form1 : Form
             }
             catch (Exception ex) { SetStatus($"Couldn't send {AppName(a)} to {DisplayName(target)}: {ex.Message}"); }
         }
-        _primed = true; // everything seen on the first pass was already playing when Audio Router opened
+        _primed = true; // everything seen on the first pass was already playing when Audix opened
     }
 
     private bool _dragging;
@@ -1083,16 +1083,16 @@ public partial class Form1 : Form
         try { ico = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
         if (ico != null) Icon = ico;
         var menu = new ContextMenuStrip();
-        menu.Items.Add("Show Audio Router", null, (_, _) => RestoreFromTray());
+        menu.Items.Add("Show Audix", null, (_, _) => RestoreFromTray());
         menu.Items.Add("Stop all routes", null, (_, _) => StopAll());
         menu.Items.Add("Reset app audio to Windows default", null, (_, _) => ResetAllOverrides());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit", null, (_, _) => { _forceExit = true; Close(); });
-        _tray = new NotifyIcon { Icon = ico ?? SystemIcons.Application, Text = "Audio Router", Visible = true, ContextMenuStrip = menu };
+        _tray = new NotifyIcon { Icon = ico ?? SystemIcons.Application, Text = "Audix", Visible = true, ContextMenuStrip = menu };
         _tray.DoubleClick += (_, _) => RestoreFromTray();
     }
 
-    private void HideToTray() { Hide(); ShowInTaskbar = false; _tray?.ShowBalloonTip(1500, "Audio Router", "Still running — routes stay active. Double-click to reopen.", ToolTipIcon.Info); }
+    private void HideToTray() { Hide(); ShowInTaskbar = false; _tray?.ShowBalloonTip(1500, "Audix", "Still running — routes stay active. Double-click to reopen.", ToolTipIcon.Info); }
     private void RestoreFromTray() { Show(); WindowState = FormWindowState.Normal; ShowInTaskbar = true; Activate(); }
 
     private bool _forceExit;
