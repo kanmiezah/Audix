@@ -97,6 +97,48 @@ public static class AudioInventory
         }
     }
 
+    /// <summary>Set the app's own volume (0..1) on every output it has a session on — the same
+    /// setting as its slider in Windows' Volume mixer.</summary>
+    public static void SetAppVolume(int pid, float volume)
+    {
+        volume = Math.Clamp(volume, 0f, 1f);
+        using var en = new MMDeviceEnumerator();
+        foreach (var dev in en.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active))
+        {
+            SessionCollection sessions;
+            try { sessions = dev.AudioSessionManager.Sessions; } catch { continue; }
+            for (int i = 0; i < sessions.Count; i++)
+            {
+                try { if (sessions[i].GetProcessID == (uint)pid) sessions[i].SimpleAudioVolume.Volume = volume; }
+                catch { } // session closed mid-loop
+            }
+        }
+    }
+
+    /// <summary>The app's volume (0..1), from an active session if it has one; 1 if it has none.</summary>
+    public static float GetAppVolume(int pid)
+    {
+        using var en = new MMDeviceEnumerator();
+        float? any = null;
+        foreach (var dev in en.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active))
+        {
+            SessionCollection sessions;
+            try { sessions = dev.AudioSessionManager.Sessions; } catch { continue; }
+            for (int i = 0; i < sessions.Count; i++)
+            {
+                try
+                {
+                    var s = sessions[i];
+                    if (s.GetProcessID != (uint)pid) continue;
+                    if (s.State == AudioSessionState.AudioSessionStateActive) return s.SimpleAudioVolume.Volume;
+                    any ??= s.SimpleAudioVolume.Volume;
+                }
+                catch { }
+            }
+        }
+        return any ?? 1f;
+    }
+
     /// <summary>Whether the app is currently muted on the default (system speaker) device.</summary>
     public static bool GetAppMuted(int pid)
     {

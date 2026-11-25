@@ -24,7 +24,7 @@ public partial class Form1 : Form
         GBluetooth = "", GMonitor = "", GMore = "", GCancel = "";
 
     private const string GChevron = ""; // ChevronRight, as on the Run dialog's rows
-    private const string GSettings = "", GRefresh = "", GBack = "";
+    private const string GSettings = "", GRefresh = "", GBack = "", GReset = "", GSaved = "", GInfo = "";
 
     // ---- type ramp (Windows 11: Caption / Body / Body Strong / Subtitle / Title) ----
     internal static readonly Font FCaption = new("Segoe UI", 9f);
@@ -182,11 +182,12 @@ public partial class Form1 : Form
         return b;
     }
 
-    private Label SectionHeading(string text, int top = 16)
+    /// <summary>Small section label over a grouped list, like "Recent commands" in the Run dialog.</summary>
+    private Panel SectionLabel(string text, int height, int top)
     {
-        var l = Lbl(text, FBodyStrong, Ink);
-        l.Margin = Pad(0, top, 0, 4);
-        return l;
+        var p = new Panel { Dock = DockStyle.Top, Height = S(height) };
+        p.Controls.Add(Lbl(text, FBody, Ink).Also(l => l.Location = TextAt(l, 0, top)));
+        return p;
     }
 
     private static string DeviceGlyph(string name)
@@ -207,6 +208,8 @@ public partial class Form1 : Form
         g.FillPath(br, path);
         return bmp;
     }
+
+    private static T SafeGet<T>(Func<T> f, T fallback) { try { return f(); } catch { return fallback; } }
 
     private readonly Dictionary<int, string> _appNames = new();
 
@@ -246,7 +249,7 @@ public partial class Form1 : Form
         var content = new Panel { Dock = DockStyle.Fill, BackColor = ContentBg, Padding = Pad(32, 20, 32, 0) };
 
         // Run-dialog style header: just the title, with quiet icon buttons on the right.
-        var header = new Panel { Dock = DockStyle.Top, Height = S(52) };
+        var header = new Panel { Dock = DockStyle.Top, Height = S(52), Padding = Pad(0, 0, 12, 0) }; // right edge lines up with the lists (page reserves 12 for its scrollbar)
         _title = Lbl("Routing", FTitle, Ink); _title.Location = TextAt(_title, 0, 0);
         var headBtns = new FlowLayoutPanel { Dock = DockStyle.Right, AutoSize = true, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
         FluentButton HeadBtn(string glyph, string name, EventHandler onClick)
@@ -300,16 +303,8 @@ public partial class Form1 : Form
         var page = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Padding = Pad(0, 0, 12, 16) };
         page.HandleCreated += (_, _) => ThemeInfo.ApplyScrollbars(page.Handle, Dark);
 
-        // Small section labels over grouped lists, like "Recent commands" in the Run dialog.
-        Panel Label(string text, int height, int top)
-        {
-            var p = new Panel { Dock = DockStyle.Top, Height = S(height) };
-            p.Controls.Add(Lbl(text, FBody, Ink).Also(l => l.Location = TextAt(l, 0, top)));
-            return p;
-        }
-
         // ===== Outputs =====
-        var outLabel = Label("Outputs", 32, 4);
+        var outLabel = SectionLabel("Outputs", 32, 4);
         // The how-to that used to be a subtitle under the title, now a quiet caption beside the section it explains.
         var hint = Lbl("Drag an app onto a device to play it there, or use an app's › menu", FCaption, Muted);
         hint.Location = TextAt(hint, 0, 6);
@@ -319,7 +314,7 @@ public partial class Form1 : Form
         _outputGroup.SizeChanged += (_, _) => FitGroups();
 
         // ===== Apps =====
-        var appHead = Label("Apps", 64, 26); // vertically centred on the search box beside it
+        var appHead = SectionLabel("Apps", 64, 26); // vertically centred on the search box beside it
         var tools = new FlowLayoutPanel { Dock = DockStyle.Right, AutoSize = true, FlowDirection = FlowDirection.RightToLeft, WrapContents = false, Padding = Pad(0, 20, 0, 0) };
 
         var sortMenu = new ContextMenuStrip();
@@ -360,19 +355,56 @@ public partial class Form1 : Form
 
     private Panel BuildSettings()
     {
-        var page = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true, Visible = false };
-        Label Para(string text) { var l = Lbl(text, FBody, Muted); l.MaximumSize = Sz(600, 0); l.Margin = Pad(0, 0, 0, 12); return l; }
+        // Same grouped-list style as Routing: one row per setting, its action on the right.
+        var page = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Visible = false, Padding = Pad(0, 0, 12, 16) };
+        page.HandleCreated += (_, _) => ThemeInfo.ApplyScrollbars(page.Handle, Dark);
 
-        page.Controls.Add(SectionHeading("App audio", 0));
-        page.Controls.Add(Para("Sends every app back to the Windows default output. Use this if an app seems stuck on a device from an earlier override."));
-        page.Controls.Add(Btn("Reset all apps to Windows default", (_, _) => ResetAllOverrides()).Also(b => b.Margin = new Padding(FBody.Height / 6, 0, 0, 0)));
+        RoundedPanel GroupOf(params (string Glyph, string Title, string Detail, FluentButton? Action)[] items)
+        {
+            var group = Group();
+            int w = S(640);
+            for (int i = 0; i < items.Length; i++)
+            {
+                var (glyph, title, detail, action) = items[i];
+                var row = new RoundedPanel { Width = w, Height = S(76), Radius = S(6), BackColor = CardBg, BorderColor = CardBg };
+                if (i > 0) row.Paint += DividerPaint;
+                int right = action == null ? S(16) : action.Width + S(32);
+                row.Controls.Add(Glyph(glyph, FIconLg, Ink).Also(l => l.Location = P(16, 24)));
+                row.Controls.Add(new Label
+                {
+                    Text = title, Font = FBodyStrong, ForeColor = Ink, AutoEllipsis = true, UseMnemonic = false,
+                    Location = P(52, 14), Size = new Size(w - S(52) - right, S(22)), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                });
+                row.Controls.Add(new Label
+                {
+                    Text = detail, Font = FCaption, ForeColor = Muted, AutoEllipsis = true, UseMnemonic = false, // wraps to a second line
+                    Location = P(52, 36), Size = new Size(w - S(52) - right, S(34)), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                });
+                if (action != null)
+                {
+                    action.Location = new Point(w - action.Width - S(16), (row.Height - action.Height) / 2);
+                    action.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+                    row.Controls.Add(action);
+                }
+                group.Controls.Add(row);
+            }
+            group.SizeChanged += (_, _) => StackRows(group);
+            return group;
+        }
 
-        page.Controls.Add(SectionHeading("Saved profiles", 28));
-        page.Controls.Add(Para("Routing profiles saved on this PC."));
-        page.Controls.Add(Btn("Clear saved profiles", (_, _) => ClearProfiles()).Also(b => b.Margin = new Padding(FBody.Height / 6, 0, 0, 0)));
+        var audio = GroupOf(
+            (GReset, "Reset app outputs", "Send every app back to the Windows default output. Use this if an app seems stuck on a device.",
+                Btn("Reset", (_, _) => ResetAllOverrides()).Also(b => b.AccessibleName = "Reset app outputs")),
+            (GSaved, "Saved profiles", "Routing profiles saved on this PC.",
+                Btn("Clear", (_, _) => ClearProfiles()).Also(b => b.AccessibleName = "Clear saved profiles")));
+        var about = GroupOf(
+            (GInfo, "Audio Router", "Sends each app's sound to the devices you choose. Closing the window keeps it running in the notification area, and routes stay active.", null));
 
-        page.Controls.Add(SectionHeading("About", 28));
-        page.Controls.Add(Para("Audio Router sends each app's sound to the devices you choose. Closing the window keeps it running in the notification area, and your routes stay active."));
+        // Docking: last added is outermost (top).
+        page.Controls.Add(about);
+        page.Controls.Add(SectionLabel("About", 56, 26));
+        page.Controls.Add(audio);
+        page.Controls.Add(SectionLabel("App audio", 32, 4));
         return page;
     }
 
@@ -394,6 +426,9 @@ public partial class Form1 : Form
         // The group draws its 1px outline at x=0, x=W-2, y=0, y=H-2; keep rows strictly inside it, or the
         // outline only shows through at each row's rounded corners (stray marks along the right edge).
         int y = 1, w = group.ClientSize.Width - 3;
+        // During first layout the group is briefly tiny; resizing rows to that would squash their
+        // right-anchored labels to zero, and they'd come back too wide and overlap the buttons.
+        if (w < S(320)) return;
         foreach (Control row in group.Controls) { row.SetBounds(1, y, w, row.Height); y += row.Height; }
         group.Height = Math.Max(y + 2, S(16));
     }
@@ -543,7 +578,7 @@ public partial class Form1 : Form
         return chip;
     }
 
-    /// <summary>One app as a list row: icon, name, the default-speaker toggle, and a chevron for "send to".</summary>
+    /// <summary>One app as a list row, laid out like a Volume mixer line: icon, name, mute, volume, and a chevron for "send to".</summary>
     private RoundedPanel BuildAppRow(AudioApp a, bool divider)
     {
         int w = S(640);
@@ -553,9 +588,10 @@ public partial class Form1 : Form
         var name = new Label
         {
             Text = AppName(a), Font = FBody, ForeColor = Ink, AutoEllipsis = true, UseMnemonic = false, TextAlign = ContentAlignment.MiddleLeft,
-            Location = P(52, 8), Size = new Size(w - S(52 + 230), S(40)), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+            Location = P(52, 8), Size = new Size(w - S(52 + 296), S(40)), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
         };
 
+        // Right to left: chevron · percentage · slider · mute
         var menu = SendToMenu(a);
         row.ContextMenuStrip = menu;
         var send = GlyphBtn(GChevron, $"Send {AppName(a)} to an output");
@@ -563,19 +599,47 @@ public partial class Form1 : Form
         send.Click += (_, _) => menu.Show(send, new Point(0, send.Height));
         send.Disposed += (_, _) => menu.Dispose();
 
-        bool muted; try { muted = AudioInventory.GetAppMuted(a.ProcessId); } catch { muted = false; }
-        var toggle = new ToggleSwitch
+        int vol = (int)Math.Round(100 * SafeGet(() => AudioInventory.GetAppVolume(a.ProcessId), 1f));
+        bool muted = SafeGet(() => AudioInventory.GetAppMuted(a.ProcessId), false);
+        var pct = new Label
         {
-            OnColor = Accent, OffColor = Muted, KnobColor = OnAccent, FocusColor = Ink, Size = Sz(44, 22),
-            Location = new Point(w - S(44 + 60), S(17)), Anchor = AnchorStyles.Top | AnchorStyles.Right, On = !muted,
-            AccessibleName = $"Play {AppName(a)} on the default speaker",
+            Font = FCaption, ForeColor = Muted, TextAlign = ContentAlignment.MiddleRight, UseMnemonic = false,
+            Size = Sz(44, 20), Location = new Point(w - S(44 + 8 + 44), S(18)), Anchor = AnchorStyles.Top | AnchorStyles.Right,
         };
-        var caption = Lbl("Speaker", FCaption, Muted); caption.Location = new Point(w - S(44 + 60 + 66), S(19)); caption.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        var spk = Glyph(muted ? GMute : GVolume, FIconSm, muted ? Muted : Accent); spk.Location = new Point(w - S(44 + 60 + 66 + 22), S(20)); spk.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        toggle.Toggled += (_, _) => { try { AudioInventory.SetAppMuted(a.ProcessId, !toggle.On); } catch { } spk.Text = toggle.On ? GVolume : GMute; spk.ForeColor = toggle.On ? Accent : Muted; SetStatus($"{AppName(a)}: system speaker {(toggle.On ? "on" : "off")}"); };
-        _tips.SetToolTip(toggle, "Also play on the system default speaker");
+        var slider = new FluentSlider
+        {
+            Value = Math.Clamp(vol, 0, 100), Size = Sz(150, 32), Location = new Point(w - S(96 + 4 + 150), S(12)),
+            Anchor = AnchorStyles.Top | AnchorStyles.Right, TrackColor = ControlBorder, FillColor = Accent, ThumbColor = Dark ? Color.FromArgb(69, 69, 69) : Color.White,
+            FocusColor = Ink, AccessibleName = $"Volume for {AppName(a)}",
+        };
+        _tips.SetToolTip(slider, "App volume");
 
-        row.Controls.Add(send); row.Controls.Add(toggle); row.Controls.Add(caption); row.Controls.Add(spk); row.Controls.Add(name); row.Controls.Add(pic);
+        // Mute applies on the default speaker (routed copies keep playing), as the old "Speaker" toggle did.
+        var mute = GlyphBtn(GVolume, "");
+        mute.Location = new Point(w - S(250 + 4 + 32), S(12)); mute.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        void ShowMute()
+        {
+            mute.Text = muted ? GMute : GVolume;
+            mute.ForeColor = muted ? Muted : Ink;
+            mute.AccessibleName = (muted ? "Unmute " : "Mute ") + AppName(a) + " on the default speaker";
+            _tips.SetToolTip(mute, muted ? "Unmute on the default speaker" : "Mute on the default speaker");
+            pct.Text = muted ? "Muted" : slider.Value + "%";
+        }
+        ShowMute();
+        mute.Click += (_, _) =>
+        {
+            muted = !muted;
+            try { AudioInventory.SetAppMuted(a.ProcessId, muted); } catch { }
+            ShowMute();
+            SetStatus($"{AppName(a)} {(muted ? "muted" : "unmuted")} on the default speaker");
+        };
+        slider.ValueChanged += (_, _) =>
+        {
+            try { AudioInventory.SetAppVolume(a.ProcessId, slider.Value / 100f); } catch { }
+            ShowMute();
+        };
+
+        row.Controls.Add(send); row.Controls.Add(pct); row.Controls.Add(slider); row.Controls.Add(mute); row.Controls.Add(name); row.Controls.Add(pic);
         WireDrag(row, a, row, pic, name);
         return row;
     }
@@ -639,7 +703,7 @@ public partial class Form1 : Form
         foreach (var panel in _outputChips.Values) DisposeChildren(panel);
         DisposeChildren(_allChips);
         foreach (var a in _allApps.OrderBy(AppName))
-            if (_outputChips.TryGetValue(a.DeviceId, out var here)) here.Controls.Add(BuildPlayingChip(a, S(220)));
+            if (a.State.EndsWith("Active") && _outputChips.TryGetValue(a.DeviceId, out var here)) here.Controls.Add(BuildPlayingChip(a, S(220))); // only what is actually playing
         foreach (var m in _mappings)
         {
             var container = m.Scope == AllScope ? _allChips : _outputChips.GetValueOrDefault(m.Scope);
