@@ -34,7 +34,10 @@ public sealed class FluentSlider : TrackBar
     protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); Invalidate(); }
     protected override void OnLostFocus(EventArgs e) { base.OnLostFocus(e); Invalidate(); }
 
-    private const int WM_PAINT = 0x000F, WM_ERASEBKGND = 0x0014;
+    private const int WM_PAINT = 0x000F, WM_ERASEBKGND = 0x0014, WM_KEYDOWN = 0x0100, WM_KEYUP = 0x0101,
+        WM_MOUSEFIRST = 0x0200, WM_MOUSELAST = 0x020E, WM_CAPTURECHANGED = 0x0215, WM_MOUSELEAVE = 0x02A3;
+
+    protected override void OnValueChanged(EventArgs e) { base.OnValueChanged(e); Invalidate(); }
     private const int TBM_GETTHUMBRECT = 0x0419, TBM_GETCHANNELRECT = 0x041A;
 
     [StructLayout(LayoutKind.Sequential)] private struct RECT { public int L, T, R, B; }
@@ -47,7 +50,15 @@ public sealed class FluentSlider : TrackBar
     protected override void WndProc(ref Message m)
     {
         if (m.Msg == WM_ERASEBKGND) { m.Result = (IntPtr)1; return; } // everything is painted below; avoids flicker
-        if (m.Msg != WM_PAINT) { base.WndProc(ref m); return; }
+        if (m.Msg != WM_PAINT)
+        {
+            base.WndProc(ref m);
+            // The native control only invalidates its own small thumb box when the thumb moves. Our thumb is
+            // bigger and the accent fill spans the whole track, so redraw everything or old pixels are left behind.
+            if (m.Msg is >= WM_MOUSEFIRST and <= WM_MOUSELAST or WM_KEYDOWN or WM_KEYUP or WM_CAPTURECHANGED or WM_MOUSELEAVE)
+                Invalidate();
+            return;
+        }
 
         var hdc = BeginPaint(Handle, out var ps);
         try
