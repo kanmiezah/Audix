@@ -42,6 +42,7 @@ public static class AppEndpointRouter
         var factory = CreateFactory();
         int h1 = Set(factory, processId, ERole.eMultimedia, IntPtr.Zero); // empty == follow default
         int h2 = Set(factory, processId, ERole.eConsole, IntPtr.Zero);
+        Marshal.ThrowExceptionForHR(h1 < 0 ? h1 : h2); // no-op when both succeeded
         return $"hr(mm)=0x{h1:X8} hr(con)=0x{h2:X8}";
     }
 

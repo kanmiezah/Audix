@@ -599,11 +599,25 @@ public partial class Form1 : Form
         // Live level of this app on this device, instead of a static "Playing" label.
         var key = (a.ProcessId, a.DeviceId);
         var meter = MakeMeter(() => _meters.TryGetValue(key, out var m) ? m.MasterPeakValue : 0f);
-        meter.Location = new Point(width - S(12 + 30), S(10)); meter.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        meter.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+
+        // ✕ only where the app isn't on Windows' default output: it sends the app back there.
+        // (On the default device it's the app's only output, so there's nothing to remove it to.)
+        var dev = _devices.FirstOrDefault(d => d.Id == a.DeviceId);
+        bool removable = dev != null && !dev.IsDefault;
+        int right = removable ? S(40) : S(12);
+        meter.Location = new Point(width - right - S(30), S(10));
+        if (removable)
+        {
+            var x = GlyphBtn(GCancel, $"Remove {AppName(a)} from {DeviceTitle(dev!.Name)} (back to Windows' default output)");
+            x.Location = new Point(width - S(36), S(4)); x.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            x.Click += (_, _) => SendBackToDefault(a);
+            chip.Controls.Add(x);
+        }
         var name = new Label
         {
             Text = AppName(a), Font = FBody, ForeColor = Ink, AutoEllipsis = true, UseMnemonic = false, TextAlign = ContentAlignment.MiddleLeft,
-            Location = P(38, 4), Size = new Size(width - S(38 + 12 + 38), S(32)), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, // inset so it doesn't cover the chip border
+            Location = P(38, 4), Size = new Size(width - S(38 + 38) - right, S(32)), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, // inset so it doesn't cover the chip border
         };
         chip.Controls.Add(meter); chip.Controls.Add(name); chip.Controls.Add(pic);
         return chip;
@@ -715,6 +729,18 @@ public partial class Form1 : Form
         _mappings.Add(m);
         RenderChips();
         SetStatus($"{AppName(app)} now plays on {(scope == AllScope ? "all outputs" : m.Routes[0].Sink.DeviceName)}");
+    }
+
+    /// <summary>Clear the app's per-app output so it follows Windows' default device again.</summary>
+    private void SendBackToDefault(AudioApp a)
+    {
+        var def = _devices.FirstOrDefault(d => d.IsDefault);
+        try { AppEndpointRouter.ResetToDefault(a.ProcessId); }
+        catch (Exception ex) { SetStatus($"Couldn't move {AppName(a)}: {ex.Message}"); return; }
+        if (def != null) // show it under the default device right away; the next refresh confirms where it really plays
+            _allApps = _allApps.Select(x => x.ProcessId == a.ProcessId ? x with { DeviceId = def.Id, DeviceName = def.Name } : x).ToList();
+        RenderChips();
+        SetStatus($"{AppName(a)} moved back to Windows' default output{(def != null ? $" ({DeviceTitle(def.Name)})" : "")}. Some apps switch on their next track or restart.");
     }
 
     private void RemoveMapping(Mapping m)
