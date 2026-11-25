@@ -24,6 +24,8 @@ public partial class Form1 : Form
         GBluetooth = "", GMonitor = "", GMore = "", GCancel = "";
 
     private const string GChevron = ""; // ChevronRight, as on the Run dialog's rows
+    private const string GLaptop = "", GDesktop = ""; // DeviceLaptopNoPic, PC1
+    private const string GSpeakers = "", GHeadset = "";
     private const string GSettings = "", GRefresh = "", GBack = "", GReset = "", GSaved = "", GInfo = "";
 
     // ---- type ramp (Windows 11: Caption / Body / Body Strong / Subtitle / Title) ----
@@ -34,6 +36,7 @@ public partial class Form1 : Form
     internal static readonly Font FTitle = new("Segoe UI Semibold", 18f);
     private static readonly Font FIconSm = new("Segoe Fluent Icons", 10f);
     private static readonly Font FIconMd = new("Segoe Fluent Icons", 12f);
+    private static readonly Font FIconXs = new("Segoe Fluent Icons", 8.5f);
     private static readonly Font FIconLg = new("Segoe Fluent Icons", 16f);
 
     // ---- palette (dynamic) ----
@@ -88,7 +91,7 @@ public partial class Form1 : Form
     private readonly List<Panel> _pages = new();
     private int _page;
     private Label _title = null!;
-    private FluentButton _settingsBtn = null!, _refreshBtn = null!;
+    private FluentButton _settingsBtn = null!, _refreshBtn = null!, _defaultOutBtn = null!;
 
     private readonly Dictionary<int, ProcessCapture> _captures = new();
     private readonly List<Mapping> _mappings = new();
@@ -112,6 +115,7 @@ public partial class Form1 : Form
         BuildUi();
         SetupTray();
         Load += (_, _) => Refresh_Click(this, EventArgs.Empty);
+        StartMeters();
         var poll = new System.Windows.Forms.Timer { Interval = 3000 };
         poll.Tick += (_, _) => PollAudio();
         poll.Start();
@@ -190,13 +194,23 @@ public partial class Form1 : Form
         return p;
     }
 
-    private static string DeviceGlyph(string name)
+    private static readonly bool IsLaptop = SystemInformation.PowerStatus.BatteryChargeStatus != BatteryChargeStatus.NoSystemBattery;
+
+    /// <summary>
+    /// An icon that shows what the output physically is, from what Windows reports (form factor + bus):
+    /// the computer's own speakers look like the computer, a Bluetooth speaker like a portable speaker,
+    /// headphones/headsets/displays as themselves. Falls back to the name when Windows doesn't say.
+    /// </summary>
+    private static (string Glyph, bool Portable) DeviceArt(OutputDevice d)
     {
-        var n = name.ToLowerInvariant();
-        if (n.Contains("head")) return GHeadphone;
-        if (n.Contains("blue") || n.Contains(" bt")) return GBluetooth;
-        if (n.Contains("monitor") || n.Contains("hdmi") || n.Contains("display") || n.Contains("nvidia") || n.Contains("tv")) return GMonitor;
-        return GVolume;
+        int ff = d.FormFactor;
+        if (ff == 3 || ff == -1 && d.Name.Contains("head", StringComparison.OrdinalIgnoreCase)) return (GHeadphone, false);
+        if (ff == 5) return (GHeadset, false);
+        if (ff == 9 || ff == -1 && (d.Name.Contains("hdmi", StringComparison.OrdinalIgnoreCase) || d.Name.Contains("display", StringComparison.OrdinalIgnoreCase)))
+            return (GMonitor, false);
+        if (d.IsBluetooth) return ("", true);                                // portable/wireless speaker
+        if (d.IsBuiltIn && ff is 1 or -1) return (IsLaptop ? GLaptop : GDesktop, false); // the PC's own speakers
+        return (GSpeakers, false);                                            // external wired/USB speakers, line out
     }
 
     private static Bitmap MakeGenericAppIcon()
@@ -293,6 +307,7 @@ public partial class Form1 : Form
         _refreshBtn.Visible = i == 0;
         // On the Settings page the gear becomes a back arrow.
         _settingsBtn.Text = i == 0 ? GSettings : GBack;
+        if (i == 1) _defaultOutBtn.Text = DefaultOutputLabel(); // devices may have changed since the page was built
         _settingsBtn.AccessibleName = i == 0 ? "Settings" : "Back to routing";
         _tips.SetToolTip(_settingsBtn, _settingsBtn.AccessibleName);
     }
@@ -392,8 +407,13 @@ public partial class Form1 : Form
             return group;
         }
 
+        _defaultOutBtn = Btn("", (_, _) => ShowDefaultOutputMenu());
+        _defaultOutBtn.Size = Sz(240, 32);
+        _defaultOutBtn.AccessibleName = "Default output for new apps";
+        _tips.SetToolTip(_defaultOutBtn, "Choose where new apps play");
+
         var audio = GroupOf(
-            (GVolume, "Default output for new apps", "Apps that start playing while Audio Router is running go to your PC's Realtek speakers, unless you route them.", null),
+            (GVolume, "Default output for new apps", "Apps that start playing while Audio Router is running go to this device, unless you route them.", _defaultOutBtn),
             (GReset, "Reset app outputs", "Send every app back to the Windows default output. Use this if an app seems stuck on a device.",
                 Btn("Reset", (_, _) => ResetAllOverrides()).Also(b => b.AccessibleName = "Reset app outputs")),
             (GSaved, "Saved profiles", "Routing profiles saved on this PC.",
@@ -445,7 +465,7 @@ public partial class Form1 : Form
             int w = _outputGroup.ClientSize.Width - 3, step = S(220 + 8);
             foreach (var (row, chips) in _rows)
             {
-                chips.Width = Math.Max(step, w - S(52 + 16));
+                chips.Width = Math.Max(step, w - S(64 + 16));
                 int n = chips.Controls.Count, perLine = Math.Max(1, chips.Width / step);
                 int lines = (n + perLine - 1) / perLine;
                 chips.Height = lines * S(46);
@@ -458,20 +478,26 @@ public partial class Form1 : Form
     }
 
     /// <summary>A device (or All outputs) row: icon, name, detail line, chevron menu, and the chips playing/routed there.</summary>
-    private FlowLayoutPanel BuildDeviceRow(string glyph, Color glyphColor, string title, string sub, string scope, string removeText, bool divider)
+    private FlowLayoutPanel BuildDeviceRow(string glyph, string badge, bool stacked, bool isDefault, string title, string sub, string scope, string removeText, bool divider, bool portable = false)
     {
         var row = new RoundedPanel { Width = S(640), Height = S(64), Radius = S(6), BackColor = CardBg, BorderColor = CardBg };
         if (divider) row.Paint += DividerPaint;
-        var icon = Glyph(glyph, FIconLg, glyphColor); icon.Location = P(16, 18);
+        // Icon tile: accent glyph marks the Windows default device; a Bluetooth badge marks wireless ones.
+        var icon = new DeviceIcon
+        {
+            Glyph = glyph, Badge = badge, Stacked = stacked, PortableSpeaker = portable, GlyphFont = FIconLg, BadgeFont = FIconXs, Radius = S(8),
+            TileColor = InputBg, GlyphColor = isDefault ? Accent : Ink, BadgeColor = Accent, BadgeBack = CardBg,
+            Location = P(12, 12), Size = Sz(40, 40),
+        };
         var name = new Label
         {
             Text = title, Font = FBodyStrong, ForeColor = Ink, AutoEllipsis = true, UseMnemonic = false,
-            Location = P(52, 12), Size = new Size(row.Width - S(52 + 56), S(22)), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+            Location = P(64, 12), Size = new Size(row.Width - S(64 + 56), S(22)), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
         };
         var detail = new Label
         {
             Text = sub, Font = FCaption, ForeColor = Muted, AutoEllipsis = true, UseMnemonic = false,
-            Location = P(52, 34), Size = new Size(row.Width - S(52 + 56), S(18)), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+            Location = P(64, 34), Size = new Size(row.Width - S(64 + 56), S(18)), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
         };
         var menu = new ContextMenuStrip();
         menu.Items.Add(removeText, null, (_, _) => ClearScope(scope));
@@ -481,7 +507,7 @@ public partial class Form1 : Form
         more.Click += (_, _) => menu.Show(more, new Point(0, more.Height));
         more.Disposed += (_, _) => menu.Dispose();
 
-        var chips = new FlowLayoutPanel { Location = P(52, 60), Size = new Size(row.Width - S(68), 0), FlowDirection = FlowDirection.LeftToRight, WrapContents = true };
+        var chips = new FlowLayoutPanel { Location = P(64, 60), Size = new Size(row.Width - S(80), 0), FlowDirection = FlowDirection.LeftToRight, WrapContents = true };
         row.Controls.Add(chips); row.Controls.Add(more); row.Controls.Add(detail); row.Controls.Add(name); row.Controls.Add(icon);
         foreach (Control c in new Control[] { row, chips, icon, name, detail }) WireDrop(c, scope);
 
@@ -567,15 +593,22 @@ public partial class Form1 : Form
     {
         var chip = new RoundedPanel { Size = new Size(width, S(40)), Radius = S(6), BackColor = InputBg, BorderColor = InputBg, Margin = Pad(0, 0, 8, 6) };
         var pic = new PictureBox { Image = AppIcon(a.ProcessId, S(20)), SizeMode = PictureBoxSizeMode.Zoom, Size = Sz(20, 20), Location = P(10, 10) };
-        bool active = a.State.EndsWith("Active");
-        var state = Lbl(active ? "Playing" : "Idle", FCaption, active ? Accent : Muted);
-        state.Location = new Point(width - S(12 + 56), S(12)); state.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        // Live level of this app on this device, instead of a static "Playing" label.
+        var key = (a.ProcessId, a.DeviceId);
+        var meter = new LevelMeter(5)
+        {
+            Source = () => _meters.TryGetValue(key, out var m) ? m.MasterPeakValue : 0f,
+            BarColor = Accent, IdleColor = ControlBorder, Size = Sz(30, 22), Location = new Point(width - S(12 + 30), S(9)),
+            Anchor = AnchorStyles.Top | AnchorStyles.Right, AccessibleName = "Playing",
+        };
+        _liveMeters.Add(meter);
+        meter.Disposed += (_, _) => _liveMeters.Remove(meter);
         var name = new Label
         {
             Text = AppName(a), Font = FBody, ForeColor = Ink, AutoEllipsis = true, UseMnemonic = false, TextAlign = ContentAlignment.MiddleLeft,
-            Location = P(38, 4), Size = new Size(width - S(38 + 12 + 60), S(32)), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, // inset so it doesn't cover the chip border
+            Location = P(38, 4), Size = new Size(width - S(38 + 12 + 42), S(32)), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, // inset so it doesn't cover the chip border
         };
-        chip.Controls.Add(state); chip.Controls.Add(name); chip.Controls.Add(pic);
+        chip.Controls.Add(meter); chip.Controls.Add(name); chip.Controls.Add(pic);
         return chip;
     }
 
@@ -766,12 +799,15 @@ public partial class Form1 : Form
             for (int i = 0; i < _devices.Count; i++)
             {
                 var d = _devices[i];
-                _outputChips[d.Id] = BuildDeviceRow(DeviceGlyph(d.Name), d.IsDefault ? Accent : Ink, DeviceTitle(d.Name),
-                    (d.IsDefault ? "Default · " : "") + DeviceKind(d.Name), d.Id, "Remove all apps from this device", divider: i > 0);
+                var (glyph, portable) = DeviceArt(d);
+                string connection = d.IsBluetooth ? " · Bluetooth" : d.IsBuiltIn ? " · Built-in" : "";
+                _outputChips[d.Id] = BuildDeviceRow(glyph, d.IsBluetooth ? GBluetooth : "", false, d.IsDefault, DeviceTitle(d.Name),
+                    (d.IsDefault ? "Default · " : "") + DeviceKind(d.Name) + connection, d.Id, "Remove all apps from this device", divider: i > 0, portable: portable);
             }
-            _allChips = BuildDeviceRow(GGlobe, Ink, "All outputs", "Plays on every device at once", AllScope, "Remove all apps from all outputs", divider: _devices.Count > 0);
+            _allChips = BuildDeviceRow(GSpeakers, "", true, false, "All outputs", "Plays on every device at once", AllScope, "Remove all apps from all outputs", divider: _devices.Count > 0);
 
             _allApps = AudioInventory.GetActiveAudioApps();
+            _meters = SafeGet(AudioInventory.GetSessionMeters, new());
             RebuildAppCards();
             RenderChips();
             SendNewAppsToDefaultOutput(); // last, so its "sent to…" status isn't overwritten by the counts
@@ -779,11 +815,65 @@ public partial class Form1 : Form
         catch (Exception ex) { SetStatus("Error: " + ex.Message); }
     }
 
+    // Live level meters on the playing chips, fed from Windows' per-session peak meters.
+    private Dictionary<(int Pid, string DeviceId), NAudio.CoreAudioApi.AudioMeterInformation> _meters = new();
+    private readonly List<LevelMeter> _liveMeters = new();
+    private System.Windows.Forms.Timer? _meterTimer;
+
+    private void StartMeters()
+    {
+        _meterTimer = new System.Windows.Forms.Timer { Interval = 50 }; // ~20 fps: lively, and cheap (one COM read per meter)
+        _meterTimer.Tick += (_, _) => { if (Visible && WindowState != FormWindowState.Minimized) foreach (var m in _liveMeters.ToArray()) m.Sample(); };
+        _meterTimer.Start();
+    }
+
     private readonly HashSet<int> _seenApps = new();
     private bool _primed;
 
     /// <summary>The output new apps are sent to: the PC's own (Realtek) speakers. Null if there are none.</summary>
-    private OutputDevice? DefaultOutput => _devices.FirstOrDefault(d => d.Name.Contains("Realtek", StringComparison.OrdinalIgnoreCase));
+    private OutputDevice? DefaultOutput
+    {
+        get
+        {
+            var id = AppSettings.DefaultOutputId;
+            if (id == "") return null;                                         // off
+            if (id != null) return _devices.FirstOrDefault(d => d.Id == id);  // chosen (null while unplugged)
+            return _devices.FirstOrDefault(d => d.Name.Contains("Realtek", StringComparison.OrdinalIgnoreCase)); // automatic
+        }
+    }
+
+    private string DefaultOutputLabel()
+    {
+        var id = AppSettings.DefaultOutputId;
+        if (id == "") return "Off";
+        if (DefaultOutput is { } d) return DeviceTitle(d.Name);
+        return id != null ? $"{AppSettings.DefaultOutputName ?? "Chosen device"} (not connected)" : "No Realtek speakers found";
+    }
+
+    private void ShowDefaultOutputMenu()
+    {
+        var menu = new ContextMenuStrip();
+        bool off = AppSettings.DefaultOutputId == "";
+        var current = DefaultOutput;
+        foreach (var d in _devices)
+        {
+            var dev = d;
+            menu.Items.Add(new ToolStripMenuItem(d.Name, null, (_, _) => ChooseDefaultOutput(dev.Id, dev.Name)) { Checked = !off && current?.Id == d.Id });
+        }
+        if (_devices.Count > 0) menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(new ToolStripMenuItem("Off — leave new apps on Windows' default", null, (_, _) => ChooseDefaultOutput("", null)) { Checked = off });
+        menu.Closed += (_, _) => BeginInvoke(new Action(menu.Dispose)); // after the click handler has run
+        menu.Show(_defaultOutBtn, new Point(0, _defaultOutBtn.Height));
+    }
+
+    private void ChooseDefaultOutput(string id, string? name)
+    {
+        bool saved = AppSettings.SetDefaultOutput(id, name);
+        _defaultOutBtn.Text = DefaultOutputLabel();
+        SetStatus(!saved ? "Couldn't save the default output; it applies until Audio Router closes."
+            : id == "" ? "New apps will stay on Windows' default output."
+            : $"New apps will go to {DefaultOutputLabel()}.");
+    }
 
     /// <summary>
     /// Apps that start playing while Audio Router runs go to <see cref="DefaultOutput"/> instead of Windows'
@@ -796,7 +886,9 @@ public partial class Form1 : Form
         foreach (var a in _allApps)
         {
             bool isNew = _seenApps.Add(a.ProcessId);
-            if (!isNew || !_primed || target == null || a.DeviceId == target.Id) continue;
+            // No "already on that device?" check: in an app's first moments Windows can report its session on the
+            // system default even when another per-app setting is about to take over. Setting it again is harmless.
+            if (!isNew || !_primed || target == null) continue;
             if (_mappings.Any(m => m.App.ProcessId == a.ProcessId)) continue;
             try
             {
@@ -912,6 +1004,12 @@ internal sealed class MenuRenderer : ToolStripProfessionalRenderer
         e.TextColor = e.Item.Enabled ? Form1.Ink : Form1.Muted;
         base.OnRenderItemText(e);
     }
+
+    // The stock check mark is black (invisible in dark mode); draw a Fluent check in the text colour instead.
+    private static readonly Font CheckFont = new("Segoe Fluent Icons", 9f);
+    protected override void OnRenderItemCheck(ToolStripItemImageRenderEventArgs e) =>
+        TextRenderer.DrawText(e.Graphics, "", CheckFont, e.ImageRectangle, Form1.Ink,
+            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
 
     protected override void OnRenderArrow(ToolStripArrowRenderEventArgs e)
     {

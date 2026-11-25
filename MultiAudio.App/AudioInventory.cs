@@ -5,7 +5,15 @@ using NAudio.CoreAudioApi.Interfaces;
 namespace MultiAudio.App;
 
 /// <summary>A physical audio output (render) endpoint.</summary>
-public record OutputDevice(string Id, string Name, bool IsDefault, string State);
+/// <summary>An output device. FormFactor is Windows' EndpointFormFactor (1 speakers, 3 headphones, 5 headset,
+/// 9 HDMI/DisplayPort display, ...; -1 unknown). Bus: the driver enumerator (HDAUDIO, USB, BTHENUM, ...).</summary>
+public record OutputDevice(string Id, string Name, bool IsDefault, string State, int FormFactor = -1, string Bus = "")
+{
+    /// <summary>Connected over Bluetooth (A2DP speakers enumerate under BTHENUM, hands-free under BTHHFENUM).</summary>
+    public bool IsBluetooth => Bus.StartsWith("BTH", StringComparison.OrdinalIgnoreCase);
+    /// <summary>Wired into the PC itself (the on-board HD Audio codec, e.g. Realtek).</summary>
+    public bool IsBuiltIn => Bus.Equals("HDAUDIO", StringComparison.OrdinalIgnoreCase);
+}
 
 /// <summary>An application currently holding an audio session on some output.</summary>
 /// <summary>An app with an audio session. DeviceId/DeviceName: the output it is playing on right now.</summary>
@@ -36,9 +44,43 @@ public static class AudioInventory
                 Id: dev.ID,
                 Name: dev.FriendlyName,
                 IsDefault: dev.ID == defaultId,
-                State: dev.State.ToString()));
+                State: dev.State.ToString(),
+                FormFactor: ReadProperty(dev, FormFactorKey) is uint ff ? (int)ff : -1,
+                Bus: ReadProperty(dev, EnumeratorKey) as string ?? ""));
         }
         return result;
+    }
+
+    private static readonly PropertyKey FormFactorKey = new(new Guid("1da5d803-d492-4edd-8c23-e0c0ffee7f0e"), 0);  // PKEY_AudioEndpoint_FormFactor
+    private static readonly PropertyKey EnumeratorKey = new(new Guid("a45c254e-df1c-4efd-8020-67d146a850e0"), 24); // PKEY_Device_EnumeratorName
+
+    private static object? ReadProperty(MMDevice dev, PropertyKey key)
+    {
+        try { var store = dev.Properties; return store.Contains(key) ? store[key].Value : null; }
+        catch { return null; } // some drivers don't expose every property
+    }
+
+    /// <summary>Live peak meters for every app session, keyed by (process id, device id). Poll them on the UI thread.</summary>
+    public static Dictionary<(int Pid, string DeviceId), AudioMeterInformation> GetSessionMeters()
+    {
+        var map = new Dictionary<(int, string), AudioMeterInformation>();
+        using var en = new MMDeviceEnumerator();
+        foreach (var dev in en.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active))
+        {
+            SessionCollection sessions;
+            try { sessions = dev.AudioSessionManager.Sessions; } catch { continue; }
+            for (int i = 0; i < sessions.Count; i++)
+            {
+                try
+                {
+                    var s = sessions[i];
+                    int pid = (int)s.GetProcessID;
+                    if (pid != 0) map[(pid, dev.ID)] = s.AudioMeterInformation;
+                }
+                catch { } // session closed mid-loop
+            }
+        }
+        return map;
     }
 
     private static readonly string OwnProcessName = Process.GetCurrentProcess().ProcessName;
