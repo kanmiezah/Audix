@@ -454,12 +454,14 @@ public partial class Form1 : Form
         return chips;
     }
 
-    private static string ShortName(string name) { int i = name.IndexOf('('); return (i > 0 ? name[..i] : name).Trim(); }
-    private static string SubName(string name) { int i = name.IndexOf('('), j = name.IndexOf(')'); return i >= 0 && j > i ? name.Substring(i + 1, j - i - 1) : "Audio device"; }
+    // Windows names outputs "<kind> (<device>)", e.g. "Speakers (Realtek High Definition Audio)": every output is
+    // "Speakers", so the part in brackets is what tells them apart. LastIndexOf copes with "(... (2))".
+    private static string DeviceTitle(string name) { int i = name.IndexOf('('), j = name.LastIndexOf(')'); return i >= 0 && j > i ? name.Substring(i + 1, j - i - 1).Trim() : name.Trim(); }
+    private static string DeviceKind(string name) { int i = name.IndexOf('('); return i > 0 ? name[..i].Trim() : "Output device"; }
 
     private RoundedPanel BuildChip(Mapping m, int width)
     {
-        string dest = m.Scope == AllScope ? "all outputs" : ShortName(m.Routes.FirstOrDefault()?.Sink.DeviceName ?? "output");
+        string dest = m.Scope == AllScope ? "all outputs" : DeviceTitle(m.Routes.FirstOrDefault()?.Sink.DeviceName ?? "output");
         var chip = new RoundedPanel { Size = new Size(width, S(40)), Radius = S(6), BackColor = InputBg, BorderColor = InputBg, Margin = Pad(0, 0, 8, 6) };
         chip.Controls.Add(new PictureBox { Image = AppIcon(m.App.ProcessId, S(20)), SizeMode = PictureBoxSizeMode.Zoom, Size = Sz(20, 20), Location = P(10, 10) });
 
@@ -699,8 +701,8 @@ public partial class Form1 : Form
             for (int i = 0; i < _devices.Count; i++)
             {
                 var d = _devices[i];
-                _outputChips[d.Id] = BuildDeviceRow(DeviceGlyph(d.Name), d.IsDefault ? Accent : Ink, ShortName(d.Name),
-                    (d.IsDefault ? "Default · " : "") + SubName(d.Name), d.Id, "Remove all apps from this device", divider: i > 0);
+                _outputChips[d.Id] = BuildDeviceRow(DeviceGlyph(d.Name), d.IsDefault ? Accent : Ink, DeviceTitle(d.Name),
+                    (d.IsDefault ? "Default · " : "") + DeviceKind(d.Name), d.Id, "Remove all apps from this device", divider: i > 0);
             }
             _allChips = BuildDeviceRow(GGlobe, Ink, "All outputs", "Plays on every device at once", AllScope, "Remove all apps from all outputs", divider: _devices.Count > 0);
 

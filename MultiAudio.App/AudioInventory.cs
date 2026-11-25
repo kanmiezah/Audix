@@ -41,6 +41,8 @@ public static class AudioInventory
         return result;
     }
 
+    private static readonly string OwnProcessName = Process.GetCurrentProcess().ProcessName;
+
     public static List<AudioApp> GetActiveAudioApps()
     {
         var byPid = new Dictionary<int, AudioApp>();
@@ -66,6 +68,8 @@ public static class AudioInventory
                 string name;
                 try { name = Process.GetProcessById((int)pid).ProcessName; }
                 catch { name = "(pid " + pid + ")"; }
+                // Another running copy of Audio Router: its sessions are routed copies, not an app (and routing them would loop).
+                if (name == OwnProcessName) continue;
 
                 // Dedupe by process; prefer an Active session's device if we see several.
                 if (!byPid.ContainsKey((int)pid) || s.State == AudioSessionState.AudioSessionStateActive)
