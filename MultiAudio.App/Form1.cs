@@ -22,6 +22,11 @@ public partial class Form1 : Form
 
     private const string AllScope = "*ALL*";
 
+    // shortcut: Bluetooth (A2DP) usually adds ~150-250 ms over wired, and a copy's own path (capture + 60 ms prime
+    // + 60 ms output buffer) adds ~130 ms, so a wired copy waits ~70 ms for the Bluetooth original. Windows doesn't
+    // report the real Bluetooth delay (it reads 0), so this is an estimate; users fine-tune it per chip.
+    private const int BluetoothOffsetMs = 70;
+
     // Segoe Fluent Icons glyphs
     private const string GVolume = "", GMute = "", GSearch = "", GGlobe = "", GHeadphone = "",
         GBluetooth = "", GMonitor = "", GMore = "", GCancel = "";
@@ -740,26 +745,41 @@ public partial class Form1 : Form
         // A copy on the device the app already plays on would double it there (an echo ~100 ms behind), so skip it.
         string native = _allApps.FirstOrDefault(x => x.ProcessId == app.ProcessId)?.DeviceId ?? app.DeviceId;
         var devices = AudioInventory.GetOutputDevices();
+        var nativeDev = devices.FirstOrDefault(d => d.Id == native);
         if (scope == native)
         {
-            SetStatus($"{AppName(app)} already plays on {DeviceTitle(devices.FirstOrDefault(d => d.Id == native)?.Name ?? "that device")}.");
+            SetStatus($"{AppName(app)} already plays on {DeviceTitle(nativeDev?.Name ?? "that device")}.");
             return;
         }
-        var m = new Mapping { App = app, Scope = scope };
-        if (scope == AllScope)
-            foreach (var d in devices.Where(d => d.Id != native)) m.Routes.Add(AddRoute(app.ProcessId, AppName(app), d.Id, d.Name, volPct, delayMs));
-        else
+        var targets = scope == AllScope ? devices : devices.Where(d => d.Id == scope).ToList();
+        if (targets.Count == 0) { SetStatus("That device is no longer available."); return; }
+
+        // Sync: a copy can be delayed to line up with the app's own sound, but the app's own sound can't be held
+        // back. So keep the app itself on the slowest speaker (Bluetooth) and put the copies on the faster ones.
+        bool swapped = false;
+        var slowest = targets.FirstOrDefault(d => d.IsBluetooth);
+        if (slowest != null && nativeDev != null && !nativeDev.IsBluetooth)
         {
-            var dev = devices.FirstOrDefault(d => d.Id == scope);
-            if (dev == null) { SetStatus("That device is no longer available."); return; }
-            m.Routes.Add(AddRoute(app.ProcessId, AppName(app), dev.Id, dev.Name, volPct, delayMs));
+            if (!MoveApp(app, slowest)) return;
+            if (scope != AllScope) { targets = new() { nativeDev }; scope = nativeDev.Id; } // the copy goes where the app was
+            nativeDev = slowest; native = slowest.Id; swapped = true;
+        }
+
+        var m = new Mapping { App = app, Scope = scope };
+        foreach (var d in targets.Where(d => d.Id != native))
+        {
+            // Copies on wired speakers wait for the Bluetooth one, so both play in step (fine-tune per chip).
+            int delay = nativeDev?.IsBluetooth == true && !d.IsBluetooth ? Math.Max(delayMs, BluetoothOffsetMs) : delayMs;
+            m.Routes.Add(AddRoute(app.ProcessId, AppName(app), d.Id, d.Name, volPct, delay));
         }
         if (m.Routes.Count == 0) { SetStatus($"{AppName(app)} already plays on the only output."); return; }
         _mappings.Add(m);
         RenderChips();
-        SetStatus(scope == AllScope
-            ? $"{AppName(app)} now plays on all outputs (added {string.Join(", ", m.Routes.Select(r => DeviceTitle(r.Sink.DeviceName)))}; it already plays on {DeviceTitle(devices.FirstOrDefault(d => d.Id == native)?.Name ?? "its own device")})"
-            : $"{AppName(app)} now plays on {m.Routes[0].Sink.DeviceName}");
+        string copies = string.Join(", ", m.Routes.Select(r => DeviceTitle(r.Sink.DeviceName)));
+        string own = DeviceTitle(nativeDev?.Name ?? "its own device");
+        SetStatus(swapped
+            ? $"{AppName(app)} now plays on {own} and {copies}, kept in sync (the app itself moved to the Bluetooth speaker). Click the chip to fine-tune the delay."
+            : $"{AppName(app)} now plays on {own} and {copies}{(m.Routes.Any(r => r.Sink.DelayMs > 0) ? ", kept in sync. Click the chip to fine-tune the delay." : ".")}");
     }
 
     private void SetWindowsDefault(string deviceId, string title)
@@ -775,11 +795,11 @@ public partial class Form1 : Form
     /// Move the app's own output to <paramref name="target"/> (Windows' per-app setting; for the Windows default the
     /// setting is cleared so the app follows the default), and drop any copy already on the target so nothing plays twice.
     /// </summary>
-    private void MoveApp(AudioApp a, OutputDevice target)
+    private bool MoveApp(AudioApp a, OutputDevice target)
     {
-        if (a.DeviceId == target.Id) { SetStatus($"{AppName(a)} already plays on {DeviceTitle(target.Name)}."); return; }
+        if (a.DeviceId == target.Id) { SetStatus($"{AppName(a)} already plays on {DeviceTitle(target.Name)}."); return false; }
         try { if (target.IsDefault) AppEndpointRouter.ResetToDefault(a.ProcessId); else AppEndpointRouter.Move(a.ProcessId, target.Id); }
-        catch (Exception ex) { SetStatus($"Couldn't move {AppName(a)}: {ex.Message}"); return; }
+        catch (Exception ex) { SetStatus($"Couldn't move {AppName(a)}: {ex.Message}"); return false; }
         foreach (var m in _mappings.Where(m => m.App.ProcessId == a.ProcessId).ToArray())
         {
             foreach (var h in m.Routes.Where(r => r.Sink.DeviceId == target.Id).ToArray()) { StopRouteHandle(h); m.Routes.Remove(h); }
@@ -789,6 +809,7 @@ public partial class Form1 : Form
         _allApps = _allApps.Select(x => x.ProcessId == a.ProcessId ? x with { DeviceId = target.Id, DeviceName = target.Name } : x).ToList();
         RenderChips();
         SetStatus($"{AppName(a)} moved to {DeviceTitle(target.Name)}. Some apps switch on their next track or restart.");
+        return true;
     }
 
     /// <summary>Where ✕ on a playing chip sends the app: a device it also plays on (a copy), else Windows' default.
