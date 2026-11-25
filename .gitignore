@@ -1,0 +1,12 @@
+# Build output
+bin/
+obj/
+publish/
+*.pdb
+
+# IDE / per-user
+.vs/
+*.user
+
+# Machine-specific registry backup (contains this PC's device IDs)
+*.reg

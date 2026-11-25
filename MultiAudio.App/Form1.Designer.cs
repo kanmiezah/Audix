@@ -14,9 +14,8 @@ partial class Form1
     private void InitializeComponent()
     {
         this.components = new System.ComponentModel.Container();
-        this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-        this.ClientSize = new System.Drawing.Size(880, 520);
-        this.Text = "MultiAudio";
-        this.MinimumSize = new System.Drawing.Size(700, 420);
+        // Every size in Form1 is scaled explicitly with S(); framework autoscaling would double it.
+        this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.None;
+        this.Text = "Audio Router";
     }
 }

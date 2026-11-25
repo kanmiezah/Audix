@@ -23,7 +23,7 @@ public sealed class Profile
 public static class ProfileStore
 {
     private static readonly string Dir =
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MultiAudio");
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MultiAudio"); // legacy folder name: renaming it would orphan saved profiles
     private static readonly string FilePath = Path.Combine(Dir, "profiles.json");
 
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };

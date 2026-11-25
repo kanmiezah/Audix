@@ -57,6 +57,7 @@ public static class AudioInventory
                 uint pid;
                 try { pid = s.GetProcessID; } catch { continue; }
                 if (pid == 0) continue; // system session
+                if (pid == Environment.ProcessId) continue; // our own playback sessions: routing ourselves would loop
 
                 // Only surface sessions that are (or were) actually playing.
                 var state = s.State.ToString();

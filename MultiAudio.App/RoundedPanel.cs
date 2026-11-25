@@ -47,7 +47,7 @@ public sealed class RoundedPanel : Panel
     protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); CheckHover(); }
     protected override void OnMouseMove(MouseEventArgs e) { base.OnMouseMove(e); CheckHover(); }
 
-    private GraphicsPath RoundedRect(Rectangle r, int rad)
+    internal static GraphicsPath RoundedRect(Rectangle r, int rad)
     {
         int d = rad * 2;
         var p = new GraphicsPath();

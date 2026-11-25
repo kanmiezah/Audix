@@ -7,15 +7,18 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
 
+    <!-- Exe stays MultiAudio.exe so existing shortcuts keep working; everything users read says Audio Router. -->
     <AssemblyName>MultiAudio</AssemblyName>
-    <Product>MultiAudio</Product>
-    <AssemblyTitle>MultiAudio — per-app audio routing</AssemblyTitle>
+    <Product>Audio Router</Product>
+    <AssemblyTitle>Audio Router</AssemblyTitle>
     <Version>1.0.0</Version>
     <FileVersion>1.0.0.0</FileVersion>
-    <Company>MultiAudio</Company>
+    <Company>Audio Router</Company>
     <ApplicationIcon>app.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <!-- shortcut: SystemAware is crisp on the primary monitor, bitmap-stretched on a second monitor with a different scale.
+         Upgrade to PerMonitorV2 by rebuilding the UI (and fonts) in a DpiChanged handler. -->
+    <ApplicationHighDpiMode>SystemAware</ApplicationHighDpiMode>
   </PropertyGroup>
 
   <ItemGroup>
