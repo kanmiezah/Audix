@@ -23,41 +23,49 @@ public partial class Form1 : Form
     private const string GVolume = "", GMute = "", GSearch = "", GGlobe = "", GHeadphone = "",
         GBluetooth = "", GMonitor = "", GMore = "", GCancel = "";
 
+    private const string GChevron = ""; // ChevronRight, as on the Run dialog's rows
+    private const string GSettings = "", GRefresh = "", GBack = "";
+
     // ---- type ramp (Windows 11: Caption / Body / Body Strong / Subtitle / Title) ----
     internal static readonly Font FCaption = new("Segoe UI", 9f);
     internal static readonly Font FBody = new("Segoe UI", 10.5f);
     internal static readonly Font FBodyStrong = new("Segoe UI Semibold", 10.5f);
     internal static readonly Font FSubtitle = new("Segoe UI Semibold", 15f);
-    internal static readonly Font FTitle = new("Segoe UI Semibold", 21f);
+    internal static readonly Font FTitle = new("Segoe UI Semibold", 18f);
     private static readonly Font FIconSm = new("Segoe Fluent Icons", 10f);
+    private static readonly Font FIconMd = new("Segoe Fluent Icons", 12f);
     private static readonly Font FIconLg = new("Segoe Fluent Icons", 16f);
 
     // ---- palette (dynamic) ----
     internal static bool Dark;
-    internal static Color ContentBg, CardBg, CardBorder, ControlBorder, Ink, Muted, Accent, OnAccent, HoverBg;
+    internal static Color ContentBg, CardBg, CardBorder, ControlBorder, Ink, Muted, Accent, OnAccent, HoverBg, InputBg;
 
+    // Frosted, cool-tinted surfaces after the Windows 11 Run dialog. (WinForms can't do real acrylic blur
+    // on this OS build, so the "glass" is approximated with tinted solids.)
     private static void UpdatePalette()
     {
         Dark = !ThemeInfo.IsLight();
         if (Dark)
         {
-            ContentBg = Color.FromArgb(32, 32, 32);
-            CardBg = Color.FromArgb(43, 43, 43);
-            CardBorder = Color.FromArgb(58, 58, 58);
-            ControlBorder = Color.FromArgb(84, 84, 84);
+            ContentBg = Color.FromArgb(30, 32, 36);
+            CardBg = Color.FromArgb(42, 45, 50);
+            CardBorder = Color.FromArgb(55, 59, 66);
+            ControlBorder = Color.FromArgb(76, 81, 90);
             Ink = Color.White;
-            Muted = Color.FromArgb(200, 200, 200);
-            HoverBg = Color.FromArgb(52, 52, 52);
+            Muted = Color.FromArgb(198, 203, 211);
+            HoverBg = Color.FromArgb(51, 55, 61);
+            InputBg = Color.FromArgb(36, 39, 44);
         }
         else
         {
-            ContentBg = Color.FromArgb(243, 243, 243);
-            CardBg = Color.FromArgb(251, 251, 251);
-            CardBorder = Color.FromArgb(229, 229, 229);
-            ControlBorder = Color.FromArgb(209, 209, 209);
-            Ink = Color.FromArgb(26, 26, 26);
-            Muted = Color.FromArgb(96, 96, 96);
-            HoverBg = Color.FromArgb(245, 245, 245);
+            ContentBg = Color.FromArgb(232, 238, 246);
+            CardBg = Color.FromArgb(245, 248, 252);
+            CardBorder = Color.FromArgb(222, 229, 239);
+            ControlBorder = Color.FromArgb(206, 215, 228);
+            Ink = Color.FromArgb(24, 28, 34);
+            Muted = Color.FromArgb(82, 90, 102);
+            HoverBg = Color.FromArgb(235, 240, 247);
+            InputBg = Color.FromArgb(221, 229, 240);
         }
         Accent = ThemeInfo.AccentColor(Dark, CardBg);
         OnAccent = ThemeInfo.OnColor(Accent);
@@ -71,16 +79,15 @@ public partial class Form1 : Form
     private readonly ToolTip _tips = new() { AutoPopDelay = 15000, InitialDelay = 400, ReshowDelay = 200 };
     private NotifyIcon? _tray;
 
-    private FlowLayoutPanel _outputRow = null!, _appRow = null!, _allChips = null!;
-    private Panel _allHost = null!;
-    private RoundedPanel _allCard = null!;
-    private readonly List<(RoundedPanel Card, FlowLayoutPanel Chips)> _outputCards = new();
+    private RoundedPanel _outputGroup = null!, _appGroup = null!;
+    private FlowLayoutPanel _allChips = null!;
+    private readonly List<(RoundedPanel Row, FlowLayoutPanel Chips)> _rows = new(); // device rows + the All outputs row
     private readonly Dictionary<string, FlowLayoutPanel> _outputChips = new();
     private Bitmap? _genericApp;
 
     private readonly List<Panel> _pages = new();
     private int _page;
-    private Label _title = null!, _subtitle = null!;
+    private Label _title = null!;
     private FluentButton _settingsBtn = null!, _refreshBtn = null!;
 
     private readonly Dictionary<int, ProcessCapture> _captures = new();
@@ -132,7 +139,7 @@ public partial class Form1 : Form
         _status.Parent?.Controls.Remove(_status); // reused across rebuilds; keep it out of the disposal below
         DisposeChildren(this);
         _pages.Clear();
-        _outputCards.Clear();
+        _rows.Clear();
         _outputChips.Clear();
 
         BuildUi();
@@ -155,8 +162,8 @@ public partial class Form1 : Form
     {
         var b = new FluentButton
         {
-            Text = text, Font = FBody, ForeColor = Ink, BackColor = CardBg, HoverColor = HoverBg, BorderColor = ControlBorder,
-            FocusColor = Ink, Radius = S(4), Margin = Pad(8, 0, 0, 0),
+            Text = text, Font = FBody, ForeColor = Ink, BackColor = CardBg, HoverColor = HoverBg, BorderColor = CardBorder,
+            FocusColor = Ink, Radius = S(6), Margin = Pad(8, 0, 0, 0),
         };
         b.Size = new Size(TextRenderer.MeasureText(widestText ?? text, FBody).Width + S(28), S(32));
         b.Click += onClick;
@@ -177,7 +184,7 @@ public partial class Form1 : Form
 
     private Label SectionHeading(string text, int top = 16)
     {
-        var l = Lbl(text, FSubtitle, Ink);
+        var l = Lbl(text, FBodyStrong, Ink);
         l.Margin = Pad(0, top, 0, 4);
         return l;
     }
@@ -238,14 +245,21 @@ public partial class Form1 : Form
 
         var content = new Panel { Dock = DockStyle.Fill, BackColor = ContentBg, Padding = Pad(32, 20, 32, 0) };
 
-        var header = new Panel { Dock = DockStyle.Top, Height = S(84) };
+        // Run-dialog style header: just the title, with quiet icon buttons on the right.
+        var header = new Panel { Dock = DockStyle.Top, Height = S(52) };
         _title = Lbl("Routing", FTitle, Ink); _title.Location = TextAt(_title, 0, 0);
-        _subtitle = Lbl("Drag an app onto a device to play it there, or use the app's ⋯ menu.", FBody, Muted); _subtitle.Location = TextAt(_subtitle, 0, 44);
-        var headBtns = new FlowLayoutPanel { Dock = DockStyle.Right, AutoSize = true, FlowDirection = FlowDirection.RightToLeft, WrapContents = false, Padding = Pad(0, 8, 0, 0) };
-        _settingsBtn = Btn("Settings", (_, _) => ShowPage(_page == 0 ? 1 : 0), "Settings");
-        _refreshBtn = Btn("Refresh", Refresh_Click);
+        var headBtns = new FlowLayoutPanel { Dock = DockStyle.Right, AutoSize = true, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        FluentButton HeadBtn(string glyph, string name, EventHandler onClick)
+        {
+            var b = GlyphBtn(glyph, name);
+            b.Font = FIconMd; b.Size = Sz(36, 36); b.Margin = Pad(4, 0, 0, 0);
+            b.Click += onClick;
+            return b;
+        }
+        _settingsBtn = HeadBtn(GSettings, "Settings", (_, _) => ShowPage(_page == 0 ? 1 : 0));
+        _refreshBtn = HeadBtn(GRefresh, "Refresh", Refresh_Click);
         headBtns.Controls.Add(_settingsBtn); headBtns.Controls.Add(_refreshBtn);
-        header.Controls.Add(headBtns); header.Controls.Add(_title); header.Controls.Add(_subtitle);
+        header.Controls.Add(headBtns); header.Controls.Add(_title);
 
         var pageHost = new Panel { Dock = DockStyle.Fill };
         var routing = BuildRouting();
@@ -273,40 +287,40 @@ public partial class Form1 : Form
         _page = i;
         for (int j = 0; j < _pages.Count; j++) _pages[j].Visible = j == i;
         _title.Text = i == 0 ? "Routing" : "Settings";
-        _subtitle.Visible = i == 0;
         _refreshBtn.Visible = i == 0;
-        _settingsBtn.Text = i == 0 ? "Settings" : "Done";
+        // On the Settings page the gear becomes a back arrow.
+        _settingsBtn.Text = i == 0 ? GSettings : GBack;
+        _settingsBtn.AccessibleName = i == 0 ? "Settings" : "Back to routing";
+        _tips.SetToolTip(_settingsBtn, _settingsBtn.AccessibleName);
     }
 
     private Panel BuildRouting()
     {
-        // The whole page scrolls (not just the app grid), so nothing gets clipped when routes make the top taller.
-        var page = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Padding = Pad(0, 0, 0, 16) };
+        // The whole page scrolls (not just the app list), so nothing gets clipped when routes make the top taller.
+        var page = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Padding = Pad(0, 0, 12, 16) };
         page.HandleCreated += (_, _) => ThemeInfo.ApplyScrollbars(page.Handle, Dark);
 
+        // Small section labels over grouped lists, like "Recent commands" in the Run dialog.
+        Panel Label(string text, int height, int top)
+        {
+            var p = new Panel { Dock = DockStyle.Top, Height = S(height) };
+            p.Controls.Add(Lbl(text, FBody, Ink).Also(l => l.Location = TextAt(l, 0, top)));
+            return p;
+        }
+
         // ===== Outputs =====
-        var outHead = new Panel { Dock = DockStyle.Top, Height = S(44) };
-        outHead.Controls.Add(Lbl("Outputs", FSubtitle, Ink).Also(l => l.Location = TextAt(l, 0, 4)));
-
-        _outputRow = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, FlowDirection = FlowDirection.LeftToRight, WrapContents = true };
-        _outputRow.SizeChanged += (_, _) => FitOutputCards();
-
-        _allHost = new Panel { Dock = DockStyle.Top, Height = S(72 + 24), Padding = Pad(0, 0, 12, 24) };
-        _allCard = new RoundedPanel { Dock = DockStyle.Fill, Radius = S(8), BackColor = CardBg, BorderColor = ControlBorder, Dashed = true };
-        var allIcon = Glyph(GGlobe, FIconLg, Ink); allIcon.Location = P(16, 22);
-        var allTitle = Lbl("All outputs", FBodyStrong, Ink); allTitle.Location = P(52, 14);
-        var allSub = Lbl("Plays on every device at once", FCaption, Muted); allSub.Location = P(52, 38);
-        // Chips wrap onto rows under the title; FitAllCard grows the card to fit them.
-        _allChips = new FlowLayoutPanel { Location = P(52, 68), FlowDirection = FlowDirection.LeftToRight, WrapContents = true };
-        _allCard.Controls.Add(_allChips); _allCard.Controls.Add(allSub); _allCard.Controls.Add(allTitle); _allCard.Controls.Add(allIcon);
-        _allCard.Resize += (_, _) => FitAllCard();
-        _allHost.Controls.Add(_allCard);
-        foreach (Control c in new Control[] { _allCard, _allChips, allTitle, allSub, allIcon }) WireDrop(c, AllScope);
+        var outLabel = Label("Outputs", 32, 4);
+        // The how-to that used to be a subtitle under the title, now a quiet caption beside the section it explains.
+        var hint = Lbl("Drag an app onto a device to play it there, or use an app's › menu", FCaption, Muted);
+        hint.Location = TextAt(hint, 0, 6);
+        hint.Left += TextRenderer.MeasureText("Outputs", FBody).Width + S(10);
+        outLabel.Controls.Add(hint);
+        _outputGroup = Group();
+        _outputGroup.SizeChanged += (_, _) => FitGroups();
 
         // ===== Apps =====
-        var appHead = new Panel { Dock = DockStyle.Top, Height = S(52) };
-        appHead.Controls.Add(Lbl("Apps", FSubtitle, Ink).Also(l => l.Location = TextAt(l, 0, 4)));
-        var tools = new FlowLayoutPanel { Dock = DockStyle.Right, AutoSize = true, FlowDirection = FlowDirection.RightToLeft, WrapContents = false, Padding = Pad(0, 4, 12, 0) };
+        var appHead = Label("Apps", 64, 26); // vertically centred on the search box beside it
+        var tools = new FlowLayoutPanel { Dock = DockStyle.Right, AutoSize = true, FlowDirection = FlowDirection.RightToLeft, WrapContents = false, Padding = Pad(0, 20, 0, 0) };
 
         var sortMenu = new ContextMenuStrip();
         FluentButton sortBtn = null!;
@@ -316,28 +330,29 @@ public partial class Form1 : Form
         sortMenu.Items.Add("Name A–Z", null, (_, _) => SetSort(0));
         sortMenu.Items.Add("Name Z–A", null, (_, _) => SetSort(1));
 
-        var searchBox = new RoundedPanel { Size = Sz(240, 32), Radius = S(4), BackColor = CardBg, BorderColor = ControlBorder, Margin = Pad(8, 0, 0, 0) };
+        // Soft filled field with no outline, like the Run dialog's input; an accent ring appears on focus.
+        var searchBox = new RoundedPanel { Size = Sz(240, 32), Radius = S(6), BackColor = InputBg, BorderColor = InputBg, Margin = Pad(8, 0, 0, 0) };
         searchBox.Controls.Add(Glyph(GSearch, FIconSm, Muted).Also(l => l.Location = P(10, 8)));
         _search = new TextBox
         {
-            BorderStyle = BorderStyle.None, Location = P(34, 7), Width = S(196), Font = FBody, BackColor = CardBg, ForeColor = Ink,
+            BorderStyle = BorderStyle.None, Location = P(34, 7), Width = S(196), Font = FBody, BackColor = InputBg, ForeColor = Ink,
             PlaceholderText = "Search apps", AccessibleName = "Search apps",
         };
         _search.TextChanged += (_, _) => RebuildAppCards();
         _search.GotFocus += (_, _) => { searchBox.BorderColor = Accent; searchBox.BorderThickness = 2; searchBox.Invalidate(); };
-        _search.LostFocus += (_, _) => { searchBox.BorderColor = ControlBorder; searchBox.BorderThickness = 1; searchBox.Invalidate(); };
+        _search.LostFocus += (_, _) => { searchBox.BorderColor = InputBg; searchBox.BorderThickness = 1; searchBox.Invalidate(); };
         searchBox.Controls.Add(_search);
 
         tools.Controls.Add(sortBtn); tools.Controls.Add(searchBox);
         appHead.Controls.Add(tools);
 
-        _appRow = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, FlowDirection = FlowDirection.LeftToRight, WrapContents = true };
+        _appGroup = Group();
+        _appGroup.SizeChanged += (_, _) => FitGroups();
 
-        page.Controls.Add(_appRow);
+        page.Controls.Add(_appGroup);
         page.Controls.Add(appHead);
-        page.Controls.Add(_allHost);
-        page.Controls.Add(_outputRow);
-        page.Controls.Add(outHead);
+        page.Controls.Add(_outputGroup);
+        page.Controls.Add(outLabel);
         return page;
     }
 
@@ -361,77 +376,82 @@ public partial class Form1 : Form
         return page;
     }
 
-    // ---------------- output / app / chip building ----------------
+    // ---------------- grouped lists (styled after the Windows 11 Run dialog) ----------------
 
-    private void FitAllCard()
+    /// <summary>One rounded surface holding stacked rows separated by hairline dividers.</summary>
+    private RoundedPanel Group() => new() { Dock = DockStyle.Top, Radius = S(8), BackColor = CardBg, BorderColor = CardBorder, Height = S(64) };
+
+    private void DividerPaint(object? s, PaintEventArgs e)
     {
-        int n = _allChips.Controls.Count, step = S(220 + 8);
-        _allChips.Width = Math.Max(step, _allCard.ClientSize.Width - S(52 + 16));
-        int rows = n == 0 ? 0 : (int)Math.Ceiling(n / (double)Math.Max(1, _allChips.Width / step));
-        _allChips.Height = rows * S(46);
-        int h = S(72 + 24) + (rows == 0 ? 0 : _allChips.Height + S(4));
-        if (_allHost.Height != h) _allHost.Height = h;
+        var row = (Control)s!;
+        using var pen = new Pen(CardBorder);
+        e.Graphics.DrawLine(pen, S(16), 1, row.Width - S(16), 1); // y=1: the row's own (hidden) border is painted along y=0
+    }
+
+    /// <summary>Stacks a group's rows top to bottom and sizes the group to fit them.</summary>
+    private void StackRows(RoundedPanel group)
+    {
+        // The group draws its 1px outline at x=0, x=W-2, y=0, y=H-2; keep rows strictly inside it, or the
+        // outline only shows through at each row's rounded corners (stray marks along the right edge).
+        int y = 1, w = group.ClientSize.Width - 3;
+        foreach (Control row in group.Controls) { row.SetBounds(1, y, w, row.Height); y += row.Height; }
+        group.Height = Math.Max(y + 2, S(16));
     }
 
     private bool _fitting;
-    private void FitOutputCards()
+    /// <summary>Wraps each device row's chips to the current width, then restacks both groups.</summary>
+    private void FitGroups()
     {
-        if (_fitting || _outputCards.Count == 0) return;
+        if (_fitting || _outputGroup == null) return;
         _fitting = true;
         try
         {
-            int gap = S(12);
-            int avail = _outputRow.ClientSize.Width;
-            // Consistent card width (~3 per row); clamp so 1-2 devices don't stretch to fill.
-            int w = Math.Clamp((avail - 3 * gap) / 3, S(240), S(360));
-
-            // Common height sized to the busiest card (min 1 chip slot), so cards aren't tall+empty.
-            int maxRows = 1;
-            foreach (var (_, chips) in _outputCards)
-                maxRows = Math.Max(maxRows, chips.Controls.OfType<RoundedPanel>().Count());
-            int h = S(12 + 52 + 12) + maxRows * S(46);
-
-            foreach (var (card, chips) in _outputCards)
+            int w = _outputGroup.ClientSize.Width - 3, step = S(220 + 8);
+            foreach (var (row, chips) in _rows)
             {
-                card.Width = w; card.Height = h;
-                card.Margin = new Padding(0, 0, gap, gap);
-                foreach (Control c in chips.Controls) if (c is RoundedPanel) c.Width = w - S(16 + 12);
+                chips.Width = Math.Max(step, w - S(52 + 16));
+                int n = chips.Controls.Count, perLine = Math.Max(1, chips.Width / step);
+                int lines = (n + perLine - 1) / perLine;
+                chips.Height = lines * S(46);
+                row.Height = S(64) + (lines == 0 ? 0 : chips.Height + S(4));
             }
+            StackRows(_outputGroup);
+            StackRows(_appGroup);
         }
         finally { _fitting = false; }
     }
 
-    private RoundedPanel BuildOutputCard(OutputDevice dev)
+    /// <summary>A device (or All outputs) row: icon, name, detail line, chevron menu, and the chips playing/routed there.</summary>
+    private FlowLayoutPanel BuildDeviceRow(string glyph, Color glyphColor, string title, string sub, string scope, string removeText, bool divider)
     {
-        var card = new RoundedPanel { Size = Sz(300, 160), Radius = S(8), BackColor = CardBg, BorderColor = CardBorder, Padding = Pad(16, 12, 12, 12) };
-
-        var head = new Panel { Dock = DockStyle.Top, Height = S(52), Width = S(272) };
-        var icon = Glyph(DeviceGlyph(dev.Name), FIconLg, dev.IsDefault ? Accent : Ink); icon.Location = P(0, 6);
+        var row = new RoundedPanel { Width = S(640), Height = S(64), Radius = S(6), BackColor = CardBg, BorderColor = CardBg };
+        if (divider) row.Paint += DividerPaint;
+        var icon = Glyph(glyph, FIconLg, glyphColor); icon.Location = P(16, 18);
         var name = new Label
         {
-            Text = ShortName(dev.Name), Font = FBodyStrong, ForeColor = Ink, AutoEllipsis = true, UseMnemonic = false,
-            Location = P(36, 2), Size = new Size(head.Width - S(36 + 36), S(22)), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+            Text = title, Font = FBodyStrong, ForeColor = Ink, AutoEllipsis = true, UseMnemonic = false,
+            Location = P(52, 12), Size = new Size(row.Width - S(52 + 56), S(22)), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
         };
-        var sub = new Label
+        var detail = new Label
         {
-            Text = (dev.IsDefault ? "Default · " : "") + SubName(dev.Name), Font = FCaption, ForeColor = Muted, AutoEllipsis = true, UseMnemonic = false,
-            Location = P(36, 26), Size = new Size(head.Width - S(36 + 36), S(18)), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+            Text = sub, Font = FCaption, ForeColor = Muted, AutoEllipsis = true, UseMnemonic = false,
+            Location = P(52, 34), Size = new Size(row.Width - S(52 + 56), S(18)), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
         };
-        var more = GlyphBtn(GMore, $"More options for {dev.Name}");
-        more.Location = new Point(head.Width - S(32), 0); more.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         var menu = new ContextMenuStrip();
-        menu.Items.Add("Remove all apps from this device", null, (_, _) => ClearScope(dev.Id));
+        menu.Items.Add(removeText, null, (_, _) => ClearScope(scope));
+        row.ContextMenuStrip = menu;
+        var more = GlyphBtn(GChevron, $"Options for {title}");
+        more.Location = new Point(row.Width - S(44), S(16)); more.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         more.Click += (_, _) => menu.Show(more, new Point(0, more.Height));
         more.Disposed += (_, _) => menu.Dispose();
-        head.Controls.Add(more); head.Controls.Add(name); head.Controls.Add(sub); head.Controls.Add(icon);
 
-        var chips = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false };
-        _outputChips[dev.Id] = chips;
-        _outputCards.Add((card, chips));
+        var chips = new FlowLayoutPanel { Location = P(52, 60), Size = new Size(row.Width - S(68), 0), FlowDirection = FlowDirection.LeftToRight, WrapContents = true };
+        row.Controls.Add(chips); row.Controls.Add(more); row.Controls.Add(detail); row.Controls.Add(name); row.Controls.Add(icon);
+        foreach (Control c in new Control[] { row, chips, icon, name, detail }) WireDrop(c, scope);
 
-        card.Controls.Add(chips); card.Controls.Add(head);
-        foreach (Control c in new Control[] { card, chips, head, icon, name, sub }) WireDrop(c, dev.Id);
-        return card;
+        _outputGroup.Controls.Add(row);
+        _rows.Add((row, chips));
+        return chips;
     }
 
     private static string ShortName(string name) { int i = name.IndexOf('('); return (i > 0 ? name[..i] : name).Trim(); }
@@ -440,7 +460,7 @@ public partial class Form1 : Form
     private RoundedPanel BuildChip(Mapping m, int width)
     {
         string dest = m.Scope == AllScope ? "all outputs" : ShortName(m.Routes.FirstOrDefault()?.Sink.DeviceName ?? "output");
-        var chip = new RoundedPanel { Size = new Size(width, S(40)), Radius = S(4), BackColor = CardBg, BorderColor = ControlBorder, Margin = Pad(0, 0, 0, 6) };
+        var chip = new RoundedPanel { Size = new Size(width, S(40)), Radius = S(6), BackColor = InputBg, BorderColor = InputBg, Margin = Pad(0, 0, 8, 6) };
         chip.Controls.Add(new PictureBox { Image = AppIcon(m.App.ProcessId, S(20)), SizeMode = PictureBoxSizeMode.Zoom, Size = Sz(20, 20), Location = P(10, 10) });
 
         var name = new FluentButton
@@ -504,33 +524,58 @@ public partial class Form1 : Form
         return menu;
     }
 
-    private RoundedPanel BuildAppCard(AudioApp a)
+    /// <summary>Read-only chip in a device card: this app is playing on this device right now (its own output, not a route we added).</summary>
+    private RoundedPanel BuildPlayingChip(AudioApp a, int width)
     {
-        var card = new RoundedPanel { Size = Sz(148, 160), Radius = S(8), BackColor = CardBg, HoverBackColor = HoverBg, BorderColor = CardBorder, Margin = Pad(0, 0, 12, 12), Cursor = Cursors.Hand };
-        var pic = new PictureBox { Image = AppIcon(a.ProcessId, S(40)), SizeMode = PictureBoxSizeMode.Zoom, Size = Sz(40, 40), Location = P(54, 22) };
-        var name = new Label { Text = AppName(a), Location = P(8, 72), Size = Sz(132, 40), TextAlign = ContentAlignment.TopCenter, ForeColor = Ink, Font = FBody, AutoEllipsis = true, UseMnemonic = false };
+        var chip = new RoundedPanel { Size = new Size(width, S(40)), Radius = S(6), BackColor = InputBg, BorderColor = InputBg, Margin = Pad(0, 0, 8, 6) };
+        var pic = new PictureBox { Image = AppIcon(a.ProcessId, S(20)), SizeMode = PictureBoxSizeMode.Zoom, Size = Sz(20, 20), Location = P(10, 10) };
+        bool active = a.State.EndsWith("Active");
+        var state = Lbl(active ? "Playing" : "Idle", FCaption, active ? Accent : Muted);
+        state.Location = new Point(width - S(12 + 56), S(12)); state.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        var name = new Label
+        {
+            Text = AppName(a), Font = FBody, ForeColor = Ink, AutoEllipsis = true, UseMnemonic = false, TextAlign = ContentAlignment.MiddleLeft,
+            Location = P(38, 4), Size = new Size(width - S(38 + 12 + 60), S(32)), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, // inset so it doesn't cover the chip border
+        };
+        chip.Controls.Add(state); chip.Controls.Add(name); chip.Controls.Add(pic);
+        return chip;
+    }
+
+    /// <summary>One app as a list row: icon, name, the default-speaker toggle, and a chevron for "send to".</summary>
+    private RoundedPanel BuildAppRow(AudioApp a, bool divider)
+    {
+        int w = S(640);
+        var row = new RoundedPanel { Width = w, Height = S(56), Radius = S(6), BackColor = CardBg, HoverBackColor = HoverBg, BorderColor = CardBg, Cursor = Cursors.Hand };
+        if (divider) row.Paint += DividerPaint;
+        var pic = new PictureBox { Image = AppIcon(a.ProcessId, S(24)), SizeMode = PictureBoxSizeMode.Zoom, Size = Sz(24, 24), Location = P(16, 16) };
+        var name = new Label
+        {
+            Text = AppName(a), Font = FBody, ForeColor = Ink, AutoEllipsis = true, UseMnemonic = false, TextAlign = ContentAlignment.MiddleLeft,
+            Location = P(52, 8), Size = new Size(w - S(52 + 230), S(40)), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+        };
 
         var menu = SendToMenu(a);
-        card.ContextMenuStrip = menu;
-        var send = GlyphBtn(GMore, $"Send {AppName(a)} to an output");
-        send.Location = P(148 - 36, 4);
+        row.ContextMenuStrip = menu;
+        var send = GlyphBtn(GChevron, $"Send {AppName(a)} to an output");
+        send.Location = new Point(w - S(44), S(12)); send.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         send.Click += (_, _) => menu.Show(send, new Point(0, send.Height));
         send.Disposed += (_, _) => menu.Dispose();
 
         bool muted; try { muted = AudioInventory.GetAppMuted(a.ProcessId); } catch { muted = false; }
-        var spk = Glyph(muted ? GMute : GVolume, FIconSm, muted ? Muted : Accent); spk.Location = P(12, 128);
-        card.Controls.Add(Lbl("Speaker", FCaption, Muted).Also(l => l.Location = P(30, 127)));
         var toggle = new ToggleSwitch
         {
-            OnColor = Accent, OffColor = Muted, KnobColor = OnAccent, FocusColor = Ink, Size = Sz(44, 22), Location = P(148 - 58, 124), On = !muted,
+            OnColor = Accent, OffColor = Muted, KnobColor = OnAccent, FocusColor = Ink, Size = Sz(44, 22),
+            Location = new Point(w - S(44 + 60), S(17)), Anchor = AnchorStyles.Top | AnchorStyles.Right, On = !muted,
             AccessibleName = $"Play {AppName(a)} on the default speaker",
         };
+        var caption = Lbl("Speaker", FCaption, Muted); caption.Location = new Point(w - S(44 + 60 + 66), S(19)); caption.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        var spk = Glyph(muted ? GMute : GVolume, FIconSm, muted ? Muted : Accent); spk.Location = new Point(w - S(44 + 60 + 66 + 22), S(20)); spk.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         toggle.Toggled += (_, _) => { try { AudioInventory.SetAppMuted(a.ProcessId, !toggle.On); } catch { } spk.Text = toggle.On ? GVolume : GMute; spk.ForeColor = toggle.On ? Accent : Muted; SetStatus($"{AppName(a)}: system speaker {(toggle.On ? "on" : "off")}"); };
         _tips.SetToolTip(toggle, "Also play on the system default speaker");
 
-        card.Controls.Add(send); card.Controls.Add(spk); card.Controls.Add(toggle); card.Controls.Add(name); card.Controls.Add(pic);
-        WireDrag(card, a, card, pic, name);
-        return card;
+        row.Controls.Add(send); row.Controls.Add(toggle); row.Controls.Add(caption); row.Controls.Add(spk); row.Controls.Add(name); row.Controls.Add(pic);
+        WireDrag(row, a, row, pic, name);
+        return row;
     }
 
     private void WireDrop(Control target, string scope)
@@ -549,12 +594,9 @@ public partial class Form1 : Form
     private void WireDrag(RoundedPanel card, AudioApp app, params Control[] handles)
     {
         Point down = Point.Empty; bool dragging = false;
-        var normal = card.BorderColor;
         void Down(object? s, MouseEventArgs e) { down = e.Location; dragging = false; }
         void Move(object? s, MouseEventArgs e) { if (e.Button == MouseButtons.Left && !dragging && (Math.Abs(e.X - down.X) > 4 || Math.Abs(e.Y - down.Y) > 4)) { dragging = true; _dragging = true; try { card.DoDragDrop(app, DragDropEffects.Copy); } finally { _dragging = false; } } }
-        void Enter(object? s, EventArgs e) { card.BorderColor = Accent; card.Invalidate(); }
-        void Leave(object? s, EventArgs e) { if (!card.ClientRectangle.Contains(card.PointToClient(Cursor.Position))) { card.BorderColor = normal; card.Invalidate(); } }
-        foreach (var h in handles) { h.MouseDown += Down; h.MouseMove += Move; h.MouseEnter += Enter; h.MouseLeave += Leave; }
+        foreach (var h in handles) { h.MouseDown += Down; h.MouseMove += Move; }
     }
 
     // ---------------- mapping model ----------------
@@ -594,26 +636,15 @@ public partial class Form1 : Form
     {
         foreach (var panel in _outputChips.Values) DisposeChildren(panel);
         DisposeChildren(_allChips);
+        foreach (var a in _allApps.OrderBy(AppName))
+            if (_outputChips.TryGetValue(a.DeviceId, out var here)) here.Controls.Add(BuildPlayingChip(a, S(220)));
         foreach (var m in _mappings)
         {
-            if (m.Scope == AllScope) { _allChips.Controls.Add(BuildChip(m, S(220)).Also(c => c.Margin = Pad(0, 0, 8, 6))); continue; }
-            if (_outputChips.TryGetValue(m.Scope, out var container)) container.Controls.Add(BuildChip(m, S(272)));
+            var container = m.Scope == AllScope ? _allChips : _outputChips.GetValueOrDefault(m.Scope);
+            container?.Controls.Add(BuildChip(m, S(220)));
         }
-        foreach (var (id, panel) in _outputChips)
-            if (panel.Controls.Count == 0) panel.Controls.Add(DropHint(id));
-        FitOutputCards();
-        FitAllCard();
+        FitGroups();
         SetStatus($"{Plural(_outputChips.Count, "output")} · {Plural(_allApps.Count, "app")} · {Plural(_mappings.Count, "route")}");
-    }
-
-    /// <summary>Dashed chip-sized slot shown in a device card with nothing routed to it.</summary>
-    private RoundedPanel DropHint(string scope)
-    {
-        var slot = new RoundedPanel { Size = new Size(S(272), S(40)), Radius = S(4), BackColor = CardBg, BorderColor = ControlBorder, Dashed = true, Margin = Pad(0, 0, 0, 6), Padding = new Padding(2) };
-        var text = new Label { Text = "Drop an app here", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, Font = FCaption, ForeColor = Muted, UseMnemonic = false };
-        slot.Controls.Add(text);
-        WireDrop(slot, scope); WireDrop(text, scope);
-        return slot;
     }
 
     /// <summary>Clears <paramref name="parent"/> and frees what Controls.Clear() leaks: window handles and icon bitmaps.
@@ -664,11 +695,14 @@ public partial class Form1 : Form
         {
             _devices = AudioInventory.GetOutputDevices();
 
-            _outputRow.SuspendLayout();
-            DisposeChildren(_outputRow); _outputChips.Clear(); _outputCards.Clear();
-            foreach (var d in _devices) _outputRow.Controls.Add(BuildOutputCard(d));
-            _outputRow.ResumeLayout();
-            FitOutputCards();
+            DisposeChildren(_outputGroup); _outputChips.Clear(); _rows.Clear();
+            for (int i = 0; i < _devices.Count; i++)
+            {
+                var d = _devices[i];
+                _outputChips[d.Id] = BuildDeviceRow(DeviceGlyph(d.Name), d.IsDefault ? Accent : Ink, ShortName(d.Name),
+                    (d.IsDefault ? "Default · " : "") + SubName(d.Name), d.Id, "Remove all apps from this device", divider: i > 0);
+            }
+            _allChips = BuildDeviceRow(GGlobe, Ink, "All outputs", "Plays on every device at once", AllScope, "Remove all apps from all outputs", divider: _devices.Count > 0);
 
             _allApps = AudioInventory.GetActiveAudioApps();
             RebuildAppCards();
@@ -687,7 +721,7 @@ public partial class Form1 : Form
         try
         {
             static string DevKey(IEnumerable<OutputDevice> ds) => string.Join("|", ds.Select(d => d.Id + (d.IsDefault ? "*" : "")));
-            static string AppKey(IEnumerable<AudioApp> xs) => string.Join("|", xs.Select(a => a.ProcessId).OrderBy(p => p));
+            static string AppKey(IEnumerable<AudioApp> xs) => string.Join("|", xs.Select(a => $"{a.ProcessId}@{a.DeviceId}:{a.State}").OrderBy(k => k));
             if (DevKey(AudioInventory.GetOutputDevices()) != DevKey(_devices) || AppKey(AudioInventory.GetActiveAudioApps()) != AppKey(_allApps))
                 Refresh_Click(this, EventArgs.Empty);
         }
@@ -696,18 +730,22 @@ public partial class Form1 : Form
 
     private void RebuildAppCards()
     {
-        if (_appRow == null) return;
+        if (_appGroup == null) return;
         var q = (_search?.Text ?? "").Trim();
         IEnumerable<AudioApp> apps = _allApps;
         if (q.Length > 0) apps = apps.Where(a => AppName(a).Contains(q, StringComparison.OrdinalIgnoreCase) || a.ProcessName.Contains(q, StringComparison.OrdinalIgnoreCase));
         apps = _sortIndex == 1 ? apps.OrderByDescending(a => AppName(a)) : apps.OrderBy(a => AppName(a));
 
-        _appRow.SuspendLayout();
-        DisposeChildren(_appRow);
+        DisposeChildren(_appGroup);
         var list = apps.ToList();
-        foreach (var a in list) _appRow.Controls.Add(BuildAppCard(a));
-        if (list.Count == 0) _appRow.Controls.Add(new Label { Text = q.Length > 0 ? "No apps match your search." : "No apps are playing sound yet. They'll appear here when they start.", AutoSize = true, ForeColor = Muted, Font = FBody, Margin = Pad(0, 8, 0, 0), UseMnemonic = false });
-        _appRow.ResumeLayout();
+        for (int i = 0; i < list.Count; i++) _appGroup.Controls.Add(BuildAppRow(list[i], divider: i > 0));
+        if (list.Count == 0)
+            _appGroup.Controls.Add(new Label
+            {
+                Text = q.Length > 0 ? "No apps match your search." : "No apps are playing sound yet. They'll appear here when they start.",
+                AutoSize = false, Height = S(56), TextAlign = ContentAlignment.MiddleLeft, Padding = Pad(16, 0, 16, 0), ForeColor = Muted, Font = FBody, UseMnemonic = false,
+            });
+        FitGroups();
     }
 
     // ---------------- tray ----------------

@@ -8,7 +8,8 @@ namespace MultiAudio.App;
 public record OutputDevice(string Id, string Name, bool IsDefault, string State);
 
 /// <summary>An application currently holding an audio session on some output.</summary>
-public record AudioApp(int ProcessId, string ProcessName, string DeviceName, string State);
+/// <summary>An app with an audio session. DeviceId/DeviceName: the output it is playing on right now.</summary>
+public record AudioApp(int ProcessId, string ProcessName, string DeviceName, string State, string DeviceId);
 
 /// <summary>
 /// Read-only discovery of output devices and audio-producing apps via WASAPI.
@@ -68,7 +69,7 @@ public static class AudioInventory
 
                 // Dedupe by process; prefer an Active session's device if we see several.
                 if (!byPid.ContainsKey((int)pid) || s.State == AudioSessionState.AudioSessionStateActive)
-                    byPid[(int)pid] = new AudioApp((int)pid, name, dev.FriendlyName, state);
+                    byPid[(int)pid] = new AudioApp((int)pid, name, dev.FriendlyName, state, dev.ID);
             }
         }
         return byPid.Values.OrderBy(a => a.ProcessName).ToList();
